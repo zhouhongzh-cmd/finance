@@ -1,0 +1,85 @@
+# Progress Board
+
+> 更新时间: 2026-03-16
+> 当前基线: `docs/requirements_codex_v1.md`
+
+---
+
+## 1. MVP Status
+
+### 已完成
+
+- 期指策略
+- 转债策略
+- 舆情策略
+- 金属套利策略
+- SQLite 存储
+- cooldown 恢复
+- Streamlit 看板
+- Docker 部署骨架
+- 基础集成测试
+
+补充说明：
+
+- 期指模块现已包含保证金快照、现货指数备源和 `16` 合约覆盖
+- 当前集成测试结果为 `18` 通过、`0` 失败、`0` 跳过
+- 当前看板已切换为“分页查看 + 当前页手动刷新”的老 GUI 风格
+- `alert_history.notified` 已接入“至少一个通知渠道发送成功”的本地状态回写
+- 调度层已按策略拆分出独立 job，并为舆情增加独立低频扫描
+- 调度层现已升级为“模块独立时钟 + GUI 可调”，并增加金属巡航/盯盘任务
+- 金属阈值已支持在 GUI 中按品种编辑，并单独写入 `data/metals_thresholds.json`
+- 已增加日度数据保留清理任务，默认保留最近 `30` 天报警历史、保证金快照、期指快照与金属快照
+
+### 当前仍未闭环
+
+- `alert_history.notified` 已完成本地回写，但仍未细分多渠道送达状态与崩溃后补发语义
+- 期指现货与保证金链路仍依赖外部站点可用性，当前通过备源保证运行连续性
+- SQLite 当前已加显式写锁，但长期高压写入下仍建议升级为单写队列
+- 金属 live 取数仍依赖外盘商品和汇率接口可用性，当前通过 fallback 与跳过单品种保证连续运行
+
+---
+
+## 2. Current Delivery State
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| 期指监控 | `DONE` | 已包含 `16` 合约覆盖、现货指数备源和保证金快照，见 `progress_ai_a_futures.md` |
+| 转债监控 | `DONE` | 见 `progress_ai_b_convertible.md` |
+| 舆情监控 | `DONE` | 见 `progress_ai_d_sentiment.md` |
+| 金属套利 | `DONE` | 已接入金属 fetcher/strategy、GUI 阈值与独立时钟 |
+| 调度和看板 | `DONE` | 当前看板已支持金属页，调度已拆分为模块级独立 job，并落库期指/金属快照 |
+| 通知传输 | `PARTIAL` | 真实发送与 `notified` 回写已接通，但多渠道细粒度回执与崩溃补发未完成 |
+
+---
+
+## 3. Historical Sub Logs
+
+- `progress_ai_a_futures.md`
+- `progress_ai_b_convertible.md`
+- `progress_ai_d_sentiment.md`
+- `progress_ai_integration.md`
+
+说明：
+
+- 这些文档是历史执行记录
+- 若与当前主需求基线冲突，以 `requirements_codex_v1.md` 为准
+
+---
+
+## 4. Phase 2
+
+以下仍属于规划，不计入当前交付完成度：
+
+- 宏观策略
+- 加密货币策略
+- 盈透策略
+- 通知链路增强（失败重试 / 多渠道回执 / 崩溃补发）
+
+---
+
+## 5. Next Recommended Work
+
+1. 把看板主读取路径逐步切到数据库快照，进一步降低 live 重抓带来的延迟。
+2. 为通知链路补失败重试、多渠道送达状态和崩溃后补发。
+3. 为金属与期指链路补更细粒度的数据质量监控与失败告警。
+4. 若后续扩到更多资产类别，继续沿用“模块独立时钟 + 策略独立 job + 快照表”模式。

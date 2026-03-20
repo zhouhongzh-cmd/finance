@@ -1,0 +1,207 @@
+# API Registry
+
+> 当前基线: `docs/requirements_codex_v1.md`
+> 说明: 本文档只记录当前 `MVP` 已使用或已规划但明确标注状态的数据源。
+
+---
+
+## 1. MVP Data Sources
+
+### 1.1 现货指数行情
+
+- `status`: `ACTIVE`
+- `module`: `fetchers/ak_futures.py`
+- `name`: `akshare.stock_zh_index_spot_em`
+- `call`: `ak.stock_zh_index_spot_em()`
+- `rate_limit`: 极宽松
+- `latency`: 约 `200ms`
+- `quality`: 高
+- `fallback`: 直连新浪指数接口 `https://hq.sinajs.cn/list=...`
+- `notes`: 当前环境中东方财富指数接口偶发代理/连接失败，新浪指数备源当前可用
+
+### 1.2 股指期货行情
+
+- `status`: `ACTIVE`
+- `module`: `fetchers/ak_futures.py`
+- `name`: `akshare.futures_zh_spot`
+- `call`: `ak.futures_zh_spot(symbol=..., market="FF", adjust="0")`
+- `rate_limit`: 建议低于 `5` 次/秒
+- `latency`: 约 `400ms`
+- `quality`: 较高
+- `fallback`: 记录日志后跳过本轮
+- `notes`: 当前活跃合约按“当月 + 下月 + 之后最近两个季月”生成，季月场景下四个品种共 `16` 个有效合约
+
+### 1.3 股指期货保证金比例
+
+- `status`: `ACTIVE`
+- `module`: `fetchers/futures_margin.py`
+- `name`: `cffex.product_page_margin_rule`
+- `call`: `httpx.get("https://www.cffex.com.cn/...")`
+- `rate_limit`: 极低频，每日 `09:00` 与 `00:00` 各一次
+- `latency`: 中等，实测可能出现握手超时
+- `quality`: 官方规则口径高，但运行时可用性一般
+- `fallback`: 优先回退到中金财富期货的每日结算保证金公告，再回退到品种默认最低保证金比例
+- `notes`: 当前环境中中金所官网常见 `Connection refused`，因此运行时经常由备源补齐 IF/IH/IC/IM 的保证金比例
+
+### 1.4 股指期货保证金比例备源
+
+- `status`: `ACTIVE_FALLBACK`
+- `module`: `fetchers/futures_margin.py`
+- `name`: `ciccwmf.daily_margin_bulletin`
+- `call`: `httpx.get("https://www.ciccwmf.cn/bzjjzdtb.jhtml")` -> latest detail page
+- `rate_limit`: 极低频，每日 `09:00` 与 `00:00` 各一次
+- `latency`: 中等
+- `quality`: 中高，属于期货公司日度结算保证金公告
+- `fallback`: 若列表或详情页失败，再回退到静态默认值
+- `notes`: 当前实测可稳定提取 `IF=14%`、`IH=14%`、`IC=15%`、`IM=15%`
+
+### 1.5 可转债主数据源
+
+- `status`: `ACTIVE`
+- `module`: `fetchers/ak_convertible.py`
+- `name`: `akshare.bond_cb_jsl`
+- `call`: `ak.bond_cb_jsl(cookie=settings.JSL_COOKIE)`
+- `rate_limit`: 极严，未登录或 Cookie 失效时常截断为 `<=30` 条
+- `latency`: 约 `400ms`
+- `quality`: 高
+- `fallback`: 若结果疑似截断，自动切换到东方财富 `datacenter` 结构化接口；仅在该接口失败时再退到 `ak.bond_zh_cov()`
+- `notes`: 主数据源可提供 `premium_rate`、`double_low`、`ytm` 等核心字段
+
+### 1.6 可转债降级数据源
+
+- `status`: `ACTIVE_FALLBACK`
+- `module`: `fetchers/ak_convertible.py`
+- `name`: `eastmoney.datacenter.RPT_BOND_CB_LIST`
+- `call`: `https://datacenter-web.eastmoney.com/api/data/v1/get`
+- `rate_limit`: 宽松
+- `latency`: 中等
+- `quality`: 中高
+- `fallback`: 若该接口失败，再回退到 `ak.bond_zh_cov()`
+- `notes`: 可提供 `CURRENT_BOND_PRICENEW`、`TRANSFER_VALUE`、`TRANSFER_PREMIUM_RATIO`、`REDEEM_TRIG_PRICE`、`RESALE_TRIG_PRICE`、`BOND_START_DATE`、`EXPIRE_DATE`、`INTEREST_RATE_EXPLAIN`、`REDEEM_CLAUSE` 等字段。系统在该源上本地计算 `double_low` 和 `ytm`。
+
+### 1.7 可转债最后兜底数据源
+
+- `status`: `ACTIVE_FALLBACK`
+- `module`: `fetchers/ak_convertible.py`
+- `name`: `akshare.bond_zh_cov`
+- `call`: `ak.bond_zh_cov()`
+- `rate_limit`: 宽松
+- `latency`: 约 `600ms`
+- `quality`: 中低
+- `fallback`: 无进一步 fallback
+- `notes`: 仅用于东方财富 datacenter 不可用时的最后兜底。字段不完整，`ytm` 无法可靠恢复。
+
+### 1.8 舆情主数据源
+
+- `status`: `ACTIVE`
+- `module`: `fetchers/sentiment_spider.py`
+- `name`: `eastmoney.stock_rank_list`
+- `call`: `httpx.post("https://emappdata.eastmoney.com/stockrank/getAllCurrentList", json=...)`
+- `rate_limit`: 宽松
+- `latency`: 约 `200ms`
+- `quality`: 高
+- `fallback`: 可切换至雪球，但当前默认不启用
+- `notes`: 当前 `MVP` 舆情能力以东方财富人气榜为主
+
+### 1.9 舆情备选数据源
+
+- `status`: `OPTIONAL`
+- `module`: `fetchers/sentiment_spider.py`
+- `name`: `xueqiu.hot_stock_list`
+- `call`: `httpx.get("https://stock.xueqiu.com/v5/stock/hot_stock/list.json")`
+- `rate_limit`: 极严
+- `latency`: 约 `500ms`
+- `quality`: 低到中
+- `fallback`: 默认仍回到东方财富
+- `notes`: 2026 年实测匿名访问经常返回登录错误，不应作为默认主源
+
+### 1.10 金属国内行情主数据源
+
+- `status`: `ACTIVE`
+- `module`: `fetchers/ak_metals.py`
+- `name`: `akshare.futures_zh_minute_sina`
+- `call`: `ak.futures_zh_minute_sina(symbol=..., period="1")`
+- `rate_limit`: 建议低于 `5` 次/秒
+- `latency`: 约 `400ms`
+- `quality`: 中高
+- `fallback`: 回退到 `ak.futures_zh_spot(symbol=..., market="CF", adjust="0")`
+- `notes`: 默认用于沪金、沪银及基础金属主力分钟线
+
+### 1.11 金属国内行情备源
+
+- `status`: `ACTIVE_FALLBACK`
+- `module`: `fetchers/ak_metals.py`
+- `name`: `akshare.futures_zh_spot`
+- `call`: `ak.futures_zh_spot(symbol=..., market="CF", adjust="0")`
+- `rate_limit`: 建议低于 `5` 次/秒
+- `latency`: 中等
+- `quality`: 中
+- `fallback`: 无进一步 fallback
+- `notes`: 当分钟线接口失败时兜底，时间字段会做本地日期补齐
+
+### 1.12 金属外盘主数据源
+
+- `status`: `ACTIVE`
+- `module`: `fetchers/ak_metals.py`
+- `name`: `akshare.futures_foreign_commodity_realtime`
+- `call`: `ak.futures_foreign_commodity_realtime(symbol=...)`
+- `rate_limit`: 中等
+- `latency`: 中等
+- `quality`: 中高
+- `fallback`: 单个 benchmark 失败则记录日志并跳过本轮
+- `notes`: 提供外盘美元报价，部分品种同时提供 `人民币报价`
+
+### 1.13 金属汇率主数据源
+
+- `status`: `ACTIVE`
+- `module`: `fetchers/ak_metals.py`
+- `name`: `akshare.fx_spot_quote`
+- `call`: `ak.fx_spot_quote()`
+- `rate_limit`: 宽松
+- `latency`: 约 `300ms`
+- `quality`: 中高
+- `fallback`: 依次回退到 `ak.currency_boc_sina()`、`forex_python.converter.CurrencyRates()`、默认汇率
+- `notes`: 当前系统使用 `USD/CNY` 买报价，失败时自动兜底
+
+---
+
+## 2. Planned Data Sources
+
+以下接口属于后续规划，不属于当前 `MVP` 验收范围。
+
+### 2.1 Crypto
+
+- `status`: `PLANNED`
+- `module`: `fetchers/binance_funding.py`
+- `name`: `ccxt.binance`
+- `call`: `ccxt.binance().fetch_funding_rates()`
+- `notes`: 等 `crypto` 模块进入正式范围后再补完整约束
+
+### 2.2 IB
+
+- `status`: `PLANNED`
+- `module`: `fetchers/ib_margin.py`
+- `name`: `ib_insync.IB.reqMktData`
+- `call`: `ib.reqMktData()`
+- `notes`: 等 `ib` 模块进入正式范围后再补完整约束
+
+### 2.3 Macro
+
+- `status`: `PLANNED`
+- `module`: `fetchers/ak_macro.py`
+- `name`: `TBD`
+- `call`: `TBD`
+- `notes`: 宏观模块尚未进入当前基线
+
+---
+
+## 3. Update Rules
+
+出现以下情况时，必须更新本文件：
+
+1. 主数据源切换
+2. 限流结论变化
+3. fallback 规则变化
+4. 某数据源从 `PLANNED` 升级为 `ACTIVE`
+
+若变化同时影响需求边界，也要同步更新 `requirements_codex_v1.md`。

@@ -1,0 +1,16 @@
+[
+    {
+        "symbol": "IF0",
+        "name": "沪深300当月连续",
+        "last_price": 3520.2,
+        "spot_price": 3540.5,
+        "days_to_maturity": 15
+    },
+    {
+        "symbol": "IC0",
+        "name": "中证500当月连续",
+        "last_price": 5410.0,
+        "spot_price": 5445.0,
+        "days_to_maturity": 22
+    }
+]

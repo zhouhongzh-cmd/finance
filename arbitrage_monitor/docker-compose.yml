@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  arbitrage_monitor:
+    build: .
+    container_name: arbitrage_monitor
+    restart: always
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - monitor_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; conn = sqlite3.connect('data/monitor_history.db'); conn.execute('SELECT 1'); conn.close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  streamlit_dashboard:
+    build: .
+    container_name: streamlit_dashboard
+    restart: always
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data:ro
+    command: ["streamlit", "run", "app_dashboard.py", "--server.address", "0.0.0.0", "--server.port", "8501"]
+    depends_on:
+      - arbitrage_monitor
+    networks:
+      - monitor_net
+
+networks:
+  monitor_net:
+    driver: bridge

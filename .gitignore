@@ -1,0 +1,6 @@
+.DS_Store
+.vscode/
+.ruff_cache/
+archives/
+tools/
+data/

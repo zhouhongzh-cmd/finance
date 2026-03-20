@@ -1,0 +1,14 @@
+[
+    {
+        "symbol": "BTC/USDT:USDT",
+        "fundingRate": 0.0015,
+        "markPrice": 65000.0,
+        "nextFundingTime": 1720000000000
+    },
+    {
+        "symbol": "ETH/USDT:USDT",
+        "fundingRate": 0.0001,
+        "markPrice": 3500.0,
+        "nextFundingTime": 1720000000000
+    }
+]

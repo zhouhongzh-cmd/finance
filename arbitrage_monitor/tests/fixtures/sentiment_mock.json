@@ -1,0 +1,26 @@
+[
+    {
+        "symbol": "SH600519",
+        "name": "贵州茅台",
+        "timestamp": "2026-03-11T13:42:00Z",
+        "hot_score": 6200000,
+        "sentiment_pulse": 0.5,
+        "rank": 1
+    },
+    {
+        "symbol": "SZ300059",
+        "name": "东方财富",
+        "timestamp": "2026-03-11T13:42:00Z",
+        "hot_score": 300000,
+        "sentiment_pulse": -0.9,
+        "rank": 2
+    },
+    {
+        "symbol": "SH601318",
+        "name": "中国平安",
+        "timestamp": "2026-03-11T13:42:00Z",
+        "hot_score": 200000,
+        "sentiment_pulse": 0.1,
+        "rank": 3
+    }
+]

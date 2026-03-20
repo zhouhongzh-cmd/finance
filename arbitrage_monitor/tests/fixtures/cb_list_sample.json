@@ -1,0 +1,18 @@
+[
+    {
+        "symbol": "113052",
+        "name": "兴业转债",
+        "price": 105.2,
+        "premium_rt": -0.5,
+        "cb_value": 110.0,
+        "double_low": 104.7
+    },
+    {
+        "symbol": "110088",
+        "name": "淮22转债",
+        "price": 108.5,
+        "premium_rt": 1.2,
+        "cb_value": 107.2,
+        "double_low": 109.7
+    }
+]
