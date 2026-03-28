@@ -3,7 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from config.settings import settings
+from config.settings import (
+    SYNCABLE_RUNTIME_FIELDS,
+    get_shared_runtime_config_path,
+    save_shared_runtime_config,
+    settings,
+)
 
 
 GUI_CONFIG_FIELDS = [
@@ -55,7 +60,7 @@ GUI_CONFIG_FIELDS = [
 
 
 def get_env_path() -> Path:
-    return Path(__file__).resolve().parents[1] / ".env"
+    return get_shared_runtime_config_path()
 
 
 def get_gui_config_values() -> dict[str, Any]:
@@ -69,45 +74,17 @@ def serialize_env_value(value: Any) -> str:
 
 
 def write_env_updates(updates: dict[str, Any], env_path: Path | None = None) -> Path:
-    env_path = env_path or get_env_path()
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if env_path.exists():
-        existing_lines = env_path.read_text(encoding="utf-8").splitlines()
-    else:
-        existing_lines = []
-
-    remaining_updates = {
-        key: serialize_env_value(value)
-        for key, value in updates.items()
-        if key in GUI_CONFIG_FIELDS
+    config_path = env_path or get_env_path()
+    filtered_updates = {
+        key: value for key, value in updates.items() if key in SYNCABLE_RUNTIME_FIELDS
     }
-
-    new_lines: list[str] = []
-    for line in existing_lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in line:
-            new_lines.append(line)
-            continue
-
-        key, _, _value = line.partition("=")
-        normalized_key = key.strip()
-        if normalized_key in remaining_updates:
-            new_lines.append(f"{normalized_key}={remaining_updates.pop(normalized_key)}")
-        else:
-            new_lines.append(line)
-
-    if remaining_updates:
-        if new_lines and new_lines[-1].strip():
-            new_lines.append("")
-        for key, value in remaining_updates.items():
-            new_lines.append(f"{key}={value}")
-
-    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-    return env_path
+    save_shared_runtime_config(settings, filtered_updates, path=config_path)
+    return config_path
 
 
 def apply_runtime_updates(updates: dict[str, Any]) -> dict[str, Any]:
-    filtered_updates = {key: value for key, value in updates.items() if key in GUI_CONFIG_FIELDS}
+    filtered_updates = {
+        key: value for key, value in updates.items() if key in GUI_CONFIG_FIELDS
+    }
     settings.apply_updates(filtered_updates)
     return get_gui_config_values()

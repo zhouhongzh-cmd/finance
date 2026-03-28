@@ -14,7 +14,7 @@ _threshold_cache: dict[str, dict[str, float]] | None = None
 
 
 def get_metals_thresholds_path() -> Path:
-    return Path(__file__).resolve().parents[1] / "data" / "metals_thresholds.json"
+    return Path(__file__).resolve().parents[1] / "config" / "metals_thresholds.json"
 
 
 def _normalize_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[str, float]]:

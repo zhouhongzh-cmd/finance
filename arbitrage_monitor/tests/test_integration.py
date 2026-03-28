@@ -3,6 +3,7 @@
 验证调度器、策略、通知、数据库的完整链路
 """
 
+import json
 import sys
 import os
 import io
@@ -123,16 +124,26 @@ def test_notifier():
 
 
 def test_runtime_config_writer():
-    """测试 GUI 配置回写 .env 的行为。"""
+    """测试 GUI 配置回写共享 JSON 的行为。"""
     logger.info("test_runtime_config_writer_start")
 
     from pathlib import Path
     from utils.runtime_config import write_env_updates
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        env_path = Path(temp_dir) / ".env"
-        env_path.write_text(
-            "FOO=bar\nENABLE_FUTURES_MONITOR=true\nCB_YTM_THRESHOLD=2.0\nMETALS_MORNING_START=09:00\n",
+        config_path = Path(temp_dir) / "runtime_settings.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "ENABLE_FUTURES_MONITOR": True,
+                    "CB_YTM_THRESHOLD": 2.0,
+                    "METALS_MORNING_START": "09:00",
+                    "DATA_RETENTION_DAYS": 30,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
             encoding="utf-8",
         )
         write_env_updates(
@@ -143,26 +154,23 @@ def test_runtime_config_writer():
                 "METALS_MORNING_START": "08:30",
                 "DATA_RETENTION_DAYS": 21,
             },
-            env_path=env_path,
+            env_path=config_path,
         )
-        content = env_path.read_text(encoding="utf-8")
+        content = json.loads(config_path.read_text(encoding="utf-8"))
 
-    if "FOO=bar" not in content:
-        print("❌ Runtime Config: unrelated env key lost")
+    if content["ENABLE_FUTURES_MONITOR"] is not False:
+        print("❌ Runtime Config: bool value not updated")
         return False
-    if "ENABLE_FUTURES_MONITOR=false" not in content:
-        print("❌ Runtime Config: bool value not serialized as expected")
-        return False
-    if "CB_YTM_THRESHOLD=3.5" not in content:
+    if content["CB_YTM_THRESHOLD"] != 3.5:
         print("❌ Runtime Config: existing numeric value not updated")
         return False
-    if "FUTURES_WATCH_INTERVAL_SECONDS=45" not in content:
+    if content["FUTURES_WATCH_INTERVAL_SECONDS"] != 45:
         print("❌ Runtime Config: missing appended key")
         return False
-    if "METALS_MORNING_START=08:30" not in content:
+    if content["METALS_MORNING_START"] != "08:30":
         print("❌ Runtime Config: schedule window not updated")
         return False
-    if "DATA_RETENTION_DAYS=21" not in content:
+    if content["DATA_RETENTION_DAYS"] != 21:
         print("❌ Runtime Config: retention days not persisted")
         return False
 
@@ -275,9 +283,9 @@ def test_scheduler_runtime_settings_sync():
 
     from pathlib import Path
     import core_scheduler as cs
-    from config.settings import Settings, settings
+    import config.settings as settings_module
+    from config.settings import settings
 
-    old_env_file = Settings.model_config.get("env_file", ".env")
     original = {
         "FUTURES_CRUISE_INTERVAL_MINUTES": settings.FUTURES_CRUISE_INTERVAL_MINUTES,
         "FUTURES_WATCH_INTERVAL_SECONDS": settings.FUTURES_WATCH_INTERVAL_SECONDS,
@@ -288,22 +296,76 @@ def test_scheduler_runtime_settings_sync():
         "METALS_WATCH_INTERVAL_SECONDS": settings.METALS_WATCH_INTERVAL_SECONDS,
         "DATA_RETENTION_DAYS": settings.DATA_RETENTION_DAYS,
     }
+    original_path = settings_module.SHARED_RUNTIME_CONFIG_PATH
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        env_path = Path(temp_dir) / ".env"
-        env_path.write_text(
-            "FUTURES_CRUISE_INTERVAL_MINUTES=7\n"
-            "FUTURES_WATCH_INTERVAL_SECONDS=45\n"
-            "CONVERTIBLE_CRUISE_INTERVAL_MINUTES=8\n"
-            "CONVERTIBLE_WATCH_INTERVAL_SECONDS=50\n"
-            "SENTIMENT_CRUISE_INTERVAL_MINUTES=4\n"
-            "METALS_CRUISE_INTERVAL_MINUTES=11\n"
-            "METALS_WATCH_INTERVAL_SECONDS=75\n"
-            "DATA_RETENTION_DAYS=20\n",
+        shared_path = Path(temp_dir) / "runtime_settings.json"
+        shared_path.write_text(
+            json.dumps(
+                {
+                    "CRUISE_INTERVAL_MINUTES": 5,
+                    "WATCH_INTERVAL_SECONDS": 30,
+                    "SENTIMENT_INTERVAL_MINUTES": 3,
+                    "THREAD_POOL_SIZE": 20,
+                    "REQUEST_TIMEOUT": 15,
+                    "RETRY_MAX_ATTEMPTS": 3,
+                    "COOLDOWN_MINUTES": 30,
+                    "DATA_RETENTION_DAYS": 20,
+                    "ENABLE_FUTURES_MONITOR": True,
+                    "ENABLE_CONVERTIBLE_MONITOR": True,
+                    "ENABLE_SENTIMENT_MONITOR": True,
+                    "ENABLE_METALS_MONITOR": True,
+                    "MORNING_START": "09:30",
+                    "MORNING_END": "11:30",
+                    "AFTERNOON_START": "13:00",
+                    "AFTERNOON_END": "15:00",
+                    "FUTURES_CRUISE_INTERVAL_MINUTES": 7,
+                    "FUTURES_WATCH_INTERVAL_SECONDS": 45,
+                    "FUTURES_MORNING_START": "09:30",
+                    "FUTURES_MORNING_END": "11:30",
+                    "FUTURES_AFTERNOON_START": "13:00",
+                    "FUTURES_AFTERNOON_END": "15:00",
+                    "FUTURES_NIGHT_START": "",
+                    "FUTURES_NIGHT_END": "",
+                    "CONVERTIBLE_CRUISE_INTERVAL_MINUTES": 8,
+                    "CONVERTIBLE_WATCH_INTERVAL_SECONDS": 50,
+                    "CONVERTIBLE_MORNING_START": "09:30",
+                    "CONVERTIBLE_MORNING_END": "11:30",
+                    "CONVERTIBLE_AFTERNOON_START": "13:00",
+                    "CONVERTIBLE_AFTERNOON_END": "15:00",
+                    "CONVERTIBLE_NIGHT_START": "",
+                    "CONVERTIBLE_NIGHT_END": "",
+                    "SENTIMENT_CRUISE_INTERVAL_MINUTES": 4,
+                    "SENTIMENT_MORNING_START": "09:00",
+                    "SENTIMENT_MORNING_END": "11:30",
+                    "SENTIMENT_AFTERNOON_START": "13:00",
+                    "SENTIMENT_AFTERNOON_END": "15:30",
+                    "SENTIMENT_NIGHT_START": "",
+                    "SENTIMENT_NIGHT_END": "",
+                    "METALS_CRUISE_INTERVAL_MINUTES": 11,
+                    "METALS_WATCH_INTERVAL_SECONDS": 75,
+                    "METALS_MORNING_START": "09:00",
+                    "METALS_MORNING_END": "11:30",
+                    "METALS_AFTERNOON_START": "13:30",
+                    "METALS_AFTERNOON_END": "15:00",
+                    "METALS_NIGHT_START": "21:00",
+                    "METALS_NIGHT_END": "02:30",
+                    "CB_NEGATIVE_PREMIUM_THRESHOLD": 0.0,
+                    "CB_DOUBLE_LOW_THRESHOLD": 130.0,
+                    "CB_YTM_THRESHOLD": 2.0,
+                    "CB_SAFE_PRICE_THRESHOLD": 130.0,
+                    "FUTURES_DISCOUNT_RATE_THRESHOLD": 8.0,
+                    "SENTIMENT_HOT_SCORE_THRESHOLD": 5000000,
+                    "SENTIMENT_PULSE_THRESHOLD": -0.8,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
             encoding="utf-8",
         )
         try:
-            Settings.model_config["env_file"] = str(env_path)
+            settings_module.SHARED_RUNTIME_CONFIG_PATH = shared_path
             settings.reload_from_env()
             cs.scheduler.remove_all_jobs()
             cs.schedule_jobs()
@@ -337,15 +399,68 @@ def test_scheduler_runtime_settings_sync():
                 print("❌ Scheduler Sync: initial metals watch interval mismatch")
                 return False
 
-            env_path.write_text(
-                "FUTURES_CRUISE_INTERVAL_MINUTES=9\n"
-                "FUTURES_WATCH_INTERVAL_SECONDS=60\n"
-                "CONVERTIBLE_CRUISE_INTERVAL_MINUTES=10\n"
-                "CONVERTIBLE_WATCH_INTERVAL_SECONDS=65\n"
-                "SENTIMENT_CRUISE_INTERVAL_MINUTES=6\n"
-                "METALS_CRUISE_INTERVAL_MINUTES=13\n"
-                "METALS_WATCH_INTERVAL_SECONDS=90\n"
-                "DATA_RETENTION_DAYS=15\n",
+            shared_path.write_text(
+                json.dumps(
+                    {
+                        "CRUISE_INTERVAL_MINUTES": 5,
+                        "WATCH_INTERVAL_SECONDS": 30,
+                        "SENTIMENT_INTERVAL_MINUTES": 3,
+                        "THREAD_POOL_SIZE": 20,
+                        "REQUEST_TIMEOUT": 15,
+                        "RETRY_MAX_ATTEMPTS": 3,
+                        "COOLDOWN_MINUTES": 30,
+                        "DATA_RETENTION_DAYS": 15,
+                        "ENABLE_FUTURES_MONITOR": True,
+                        "ENABLE_CONVERTIBLE_MONITOR": True,
+                        "ENABLE_SENTIMENT_MONITOR": True,
+                        "ENABLE_METALS_MONITOR": True,
+                        "MORNING_START": "09:30",
+                        "MORNING_END": "11:30",
+                        "AFTERNOON_START": "13:00",
+                        "AFTERNOON_END": "15:00",
+                        "FUTURES_CRUISE_INTERVAL_MINUTES": 9,
+                        "FUTURES_WATCH_INTERVAL_SECONDS": 60,
+                        "FUTURES_MORNING_START": "09:30",
+                        "FUTURES_MORNING_END": "11:30",
+                        "FUTURES_AFTERNOON_START": "13:00",
+                        "FUTURES_AFTERNOON_END": "15:00",
+                        "FUTURES_NIGHT_START": "",
+                        "FUTURES_NIGHT_END": "",
+                        "CONVERTIBLE_CRUISE_INTERVAL_MINUTES": 10,
+                        "CONVERTIBLE_WATCH_INTERVAL_SECONDS": 65,
+                        "CONVERTIBLE_MORNING_START": "09:30",
+                        "CONVERTIBLE_MORNING_END": "11:30",
+                        "CONVERTIBLE_AFTERNOON_START": "13:00",
+                        "CONVERTIBLE_AFTERNOON_END": "15:00",
+                        "CONVERTIBLE_NIGHT_START": "",
+                        "CONVERTIBLE_NIGHT_END": "",
+                        "SENTIMENT_CRUISE_INTERVAL_MINUTES": 6,
+                        "SENTIMENT_MORNING_START": "09:00",
+                        "SENTIMENT_MORNING_END": "11:30",
+                        "SENTIMENT_AFTERNOON_START": "13:00",
+                        "SENTIMENT_AFTERNOON_END": "15:30",
+                        "SENTIMENT_NIGHT_START": "",
+                        "SENTIMENT_NIGHT_END": "",
+                        "METALS_CRUISE_INTERVAL_MINUTES": 13,
+                        "METALS_WATCH_INTERVAL_SECONDS": 90,
+                        "METALS_MORNING_START": "09:00",
+                        "METALS_MORNING_END": "11:30",
+                        "METALS_AFTERNOON_START": "13:30",
+                        "METALS_AFTERNOON_END": "15:00",
+                        "METALS_NIGHT_START": "21:00",
+                        "METALS_NIGHT_END": "02:30",
+                        "CB_NEGATIVE_PREMIUM_THRESHOLD": 0.0,
+                        "CB_DOUBLE_LOW_THRESHOLD": 130.0,
+                        "CB_YTM_THRESHOLD": 2.0,
+                        "CB_SAFE_PRICE_THRESHOLD": 130.0,
+                        "FUTURES_DISCOUNT_RATE_THRESHOLD": 8.0,
+                        "SENTIMENT_HOT_SCORE_THRESHOLD": 5000000,
+                        "SENTIMENT_PULSE_THRESHOLD": -0.8,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
                 encoding="utf-8",
             )
             cs.sync_runtime_settings()
@@ -383,7 +498,8 @@ def test_scheduler_runtime_settings_sync():
                 return False
         finally:
             cs.scheduler.remove_all_jobs()
-            Settings.model_config["env_file"] = old_env_file
+            settings_module.SHARED_RUNTIME_CONFIG_PATH = original_path
+            settings.reload_from_env()
             settings.apply_updates(original)
 
     logger.info("scheduler_runtime_settings_sync_ok")
@@ -1002,7 +1118,7 @@ def test_retention_cleanup():
     db.save_futures_live_snapshots(
         [
             FuturesData(
-                symbol="IF2603",
+                symbol="RETENTION_IF_OLD",
                 timestamp=old_ts,
                 price=3500.0,
                 spot_price=3600.0,
@@ -1015,7 +1131,7 @@ def test_retention_cleanup():
                 days_to_maturity=20,
             ),
             FuturesData(
-                symbol="IF2604",
+                symbol="RETENTION_IF_NEW",
                 timestamp=new_ts,
                 price=3550.0,
                 spot_price=3600.0,
@@ -1093,10 +1209,10 @@ def test_retention_cleanup():
             "SELECT COUNT(*) FROM futures_margin_snapshot WHERE source = 'retention_new'"
         ).fetchone()[0]
         old_futures_count = conn.execute(
-            "SELECT COUNT(*) FROM futures_live_snapshot WHERE symbol = 'IF2603'"
+            "SELECT COUNT(*) FROM futures_live_snapshot WHERE symbol = 'RETENTION_IF_OLD'"
         ).fetchone()[0]
         new_futures_count = conn.execute(
-            "SELECT COUNT(*) FROM futures_live_snapshot WHERE symbol = 'IF2604'"
+            "SELECT COUNT(*) FROM futures_live_snapshot WHERE symbol = 'RETENTION_IF_NEW'"
         ).fetchone()[0]
         old_metals_count = conn.execute(
             "SELECT COUNT(*) FROM metal_arbitrage_snapshot WHERE symbol = 'AU0:GC' AND fetched_at = ?",
@@ -1110,7 +1226,7 @@ def test_retention_cleanup():
         conn.execute(
             "DELETE FROM futures_margin_snapshot WHERE source = 'retention_new'"
         )
-        conn.execute("DELETE FROM futures_live_snapshot WHERE symbol = 'IF2604'")
+        conn.execute("DELETE FROM futures_live_snapshot WHERE symbol = 'RETENTION_IF_NEW'")
         conn.execute(
             "DELETE FROM metal_arbitrage_snapshot WHERE symbol = 'AG0:SI' AND fetched_at = ?",
             (new_ts.isoformat(),),

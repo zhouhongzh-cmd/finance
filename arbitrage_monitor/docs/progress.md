@@ -27,7 +27,8 @@
 - `alert_history.notified` 已接入“至少一个通知渠道发送成功”的本地状态回写
 - 调度层已按策略拆分出独立 job，并为舆情增加独立低频扫描
 - 调度层现已升级为“模块独立时钟 + GUI 可调”，并增加金属巡航/盯盘任务
-- 金属阈值已支持在 GUI 中按品种编辑，并单独写入 `data/metals_thresholds.json`
+- 共享运行参数已迁移到仓库内的 `config/runtime_settings.json`
+- 金属阈值已支持在 GUI 中按品种编辑，并单独写入 `config/metals_thresholds.json`
 - 已增加日度数据保留清理任务，默认保留最近 `30` 天报警历史、保证金快照、期指快照与金属快照
 
 ### 当前仍未闭环

@@ -6,6 +6,7 @@ services:
     container_name: arbitrage_monitor
     restart: always
     volumes:
+      - ./config:/app/config
       - ./data:/app/data
       - ./.env:/app/.env:ro
     environment:
@@ -26,7 +27,9 @@ services:
     ports:
       - "8501:8501"
     volumes:
+      - ./config:/app/config:ro
       - ./data:/app/data:ro
+      - ./.env:/app/.env:ro
     command: ["streamlit", "run", "app_dashboard.py", "--server.address", "0.0.0.0", "--server.port", "8501"]
     depends_on:
       - arbitrage_monitor

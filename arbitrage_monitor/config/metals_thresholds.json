@@ -1,0 +1,42 @@
+{
+  "AU0": {
+    "upper": 1.0,
+    "lower": -1.0
+  },
+  "AG0": {
+    "upper": 2.0,
+    "lower": -2.0
+  },
+  "PT0": {
+    "upper": 2.0,
+    "lower": -2.0
+  },
+  "PD0": {
+    "upper": 2.0,
+    "lower": -2.0
+  },
+  "CU0": {
+    "upper": 1.5,
+    "lower": -1.5
+  },
+  "AL0": {
+    "upper": 1.5,
+    "lower": -1.5
+  },
+  "ZN0": {
+    "upper": 1.5,
+    "lower": -1.5
+  },
+  "PB0": {
+    "upper": 1.5,
+    "lower": -1.5
+  },
+  "NI0": {
+    "upper": 2.0,
+    "lower": -2.0
+  },
+  "SN0": {
+    "upper": 2.0,
+    "lower": -2.0
+  }
+}

@@ -2,6 +2,8 @@
 
 > 当前协作基线: `docs/requirements_codex_v1.md`
 > 适用范围: `arbitrage_monitor` 当前 `MVP`
+> 共享运行配置默认写入 `config/runtime_settings.json` 和 `config/metals_thresholds.json`
+> `.env` 仅用于本机私密项，如通知地址和 Cookie
 
 ---
 
@@ -55,6 +57,10 @@
 ---
 
 ## 3. 文档修改规则
+
+补充说明：
+
+- 若涉及多台电脑同步、GitHub 远程、SSH key 或跨设备工作流，参考 `docs/multi_device_sync_guide.md`
 
 ### 变更先分类
 

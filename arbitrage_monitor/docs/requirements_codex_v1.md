@@ -112,6 +112,7 @@
 3. 单个策略任务失败不得阻塞其他策略 job 继续运行
 4. 通知发送通过内存队列异步处理，避免阻塞主流程
 5. 各模块的时钟参数独立配置，并允许通过 GUI 热更新
+6. 共享运行参数默认写入仓库内的 `config/runtime_settings.json` 与 `config/metals_thresholds.json`，`.env` 仅保留本机私密项
 
 ### 5.2 并发边界
 
@@ -364,7 +365,7 @@
 配置约束：
 
 - 逐金属阈值由 GUI 管理
-- 持久化文件为 `data/metals_thresholds.json`
+- 持久化文件为 `config/metals_thresholds.json`
 - `fetch_live()` 与 `fetch_from_fixture()` 必须返回同一数据契约
 
 ### 8.6 新策略接入规则
@@ -459,7 +460,7 @@
 
 补充说明：
 
-- 模块时钟在 GUI 中可独立修改，并回写 `.env`
+- 模块时钟在 GUI 中可独立修改，并回写 `config/runtime_settings.json`
 - 金属夜盘允许跨日窗口判断
 - 舆情策略默认允许更宽的运行窗口，但仍走独立低频任务
 
@@ -685,6 +686,7 @@
 ### 15.4 安全性
 
 - Webhook、Cookie 等敏感配置通过 `.env` 管理
+- 监控频率、模块开关、策略阈值和金属阈值通过仓库内共享配置文件管理
 - 敏感文件不得提交到版本库
 
 ---

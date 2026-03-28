@@ -24,6 +24,9 @@
 5. `docs/progress.md`
 作用：查看当前交付状态、待补能力和历史子进度链接。
 
+6. `docs/multi_device_sync_guide.md`
+作用：当需要在多台电脑之间同步代码、配置 GitHub SSH 或切换工作机器时，按此文档执行。
+
 ---
 
 ## Historical Notes

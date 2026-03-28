@@ -20,7 +20,10 @@ st.set_page_config(
 )
 
 st.title("⚙️ 参数设置")
-st.caption("在 GUI 中调整各模块开关、阈值和独立时钟。模块时钟写回 `.env`，金属阈值单独写入 JSON 配置。")
+st.caption(
+    "在 GUI 中调整各模块开关、阈值和独立时钟。模块运行参数写入 `config/runtime_settings.json`，"
+    "金属阈值写入 `config/metals_thresholds.json`，两者都会随仓库同步。"
+)
 
 settings.reload_from_env()
 current = get_gui_config_values()
@@ -235,17 +238,19 @@ if submitted:
     updates.update(metals_windows)
 
     try:
-        env_path = write_env_updates(updates)
+        config_path = write_env_updates(updates)
         apply_runtime_updates(updates)
-        st.success(f"模块配置已保存到 {env_path.name}，当前进程已热更新。")
-        st.info("后台调度器会在下一次配置同步时自动拾取这些新值。")
+        st.success(f"模块配置已保存到 {config_path.name}，当前进程已热更新。")
+        st.info("共享配置会跟随仓库同步，其他电脑 `git pull` 后会自动使用同一套参数。")
     except Exception as exc:
         st.error(f"保存失败：{exc}")
 
 
 st.markdown("---")
 st.subheader("金属阈值")
-st.caption("每个金属独立维护上/下阈值。保存后会写入 `data/metals_thresholds.json` 并立即生效。")
+st.caption(
+    "每个金属独立维护上/下阈值。保存后会写入 `config/metals_thresholds.json` 并立即生效。"
+)
 
 threshold_rows = get_metals_config_rows()
 with st.form("metals_threshold_form"):
@@ -278,7 +283,7 @@ with st.form("metals_threshold_form"):
 if save_thresholds:
     try:
         path = save_metals_thresholds(threshold_updates)
-        st.success(f"金属阈值已保存到 {path.name}，后续策略轮次会立即生效。")
+        st.success(f"金属阈值已保存到 {path.name}，后续策略轮次会立即生效并随仓库同步。")
     except Exception as exc:
         st.error(f"保存金属阈值失败：{exc}")
 
