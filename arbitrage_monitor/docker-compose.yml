@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   arbitrage_monitor:
     build: .
@@ -28,7 +26,7 @@ services:
       - "8501:8501"
     volumes:
       - ./config:/app/config:ro
-      - ./data:/app/data:ro
+      - ./data:/app/data
       - ./.env:/app/.env:ro
     command: ["streamlit", "run", "app_dashboard.py", "--server.address", "0.0.0.0", "--server.port", "8501"]
     depends_on:
