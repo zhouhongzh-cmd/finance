@@ -3,6 +3,8 @@ import streamlit as st
 from config.settings import settings
 from utils.metals_config import (
     get_metals_config_rows,
+    get_legacy_metals_thresholds_preview,
+    migrate_legacy_metals_thresholds,
     reset_metals_thresholds,
     save_metals_thresholds,
 )
@@ -251,6 +253,29 @@ st.subheader("金属阈值")
 st.caption(
     "每个金属独立维护上/下阈值。保存后会写入 `config/metals_thresholds.json` 并立即生效。"
 )
+st.caption("当前 `config/metals_thresholds.json` 若是旧版本结构，系统会自动补齐新增金属并忽略已废弃项。")
+
+legacy_preview = get_legacy_metals_thresholds_preview()
+if legacy_preview:
+    st.warning(
+        "检测到旧版 `data/metals_thresholds.json` 与当前配置不同。"
+        "升级后的正式配置只使用 `config/metals_thresholds.json`，请确认是否迁移旧值。"
+    )
+    st.dataframe(legacy_preview["differences"], use_container_width=True, hide_index=True)
+    migrate_col, skip_col = st.columns([1, 1])
+    with migrate_col:
+        if st.button("迁移旧版金属阈值", use_container_width=True):
+            try:
+                result = migrate_legacy_metals_thresholds()
+                removed_text = "，旧文件已清理" if result["removed_legacy"] else ""
+                st.success(
+                    f"已迁移 {result['count']} 个金属阈值到 {result['path'].name}{removed_text}。"
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f"迁移旧版阈值失败：{exc}")
+    with skip_col:
+        st.info("如果你暂时不迁移，当前程序会继续使用 `config/metals_thresholds.json`。")
 
 threshold_rows = get_metals_config_rows()
 with st.form("metals_threshold_form"):

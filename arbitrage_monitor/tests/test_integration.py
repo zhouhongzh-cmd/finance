@@ -725,6 +725,157 @@ def test_metals_conversion_and_thresholds():
     return True
 
 
+def test_legacy_metals_threshold_migration():
+    """测试旧版金属阈值文件的显式迁移和字段兼容性。"""
+    logger.info("test_legacy_metals_threshold_migration_start")
+
+    from pathlib import Path
+    import utils.metals_config as metals_config
+
+    original_new_path_fn = metals_config.get_metals_thresholds_path
+    original_legacy_path_fn = metals_config.get_legacy_metals_thresholds_path
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        new_path = temp_root / "config" / "metals_thresholds.json"
+        legacy_path = temp_root / "data" / "metals_thresholds.json"
+        new_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+
+        new_path.write_text(
+            json.dumps(
+                {
+                    "AU0": {"upper": 1.0, "lower": -1.0},
+                    "AG0": {"upper": 2.0, "lower": -2.0},
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        legacy_path.write_text(
+            json.dumps(
+                {
+                    "AU0": {"upper": 1.0, "lower": -1.0},
+                    "AG0": {"upper": 8.0, "lower": -8.0},
+                    "REMOVED_SYMBOL": {"upper": 99.0, "lower": -99.0},
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        metals_config.get_metals_thresholds_path = lambda: new_path
+        metals_config.get_legacy_metals_thresholds_path = lambda: legacy_path
+        metals_config._threshold_cache = None
+
+        try:
+            preview = metals_config.get_legacy_metals_thresholds_preview()
+            if preview is None:
+                print("❌ Metals Migration: expected migration preview")
+                return False
+            if len(preview["differences"]) != 1 or preview["differences"][0]["symbol"] != "AG0":
+                print(f"❌ Metals Migration: unexpected diff preview {preview['differences']}")
+                return False
+
+            result = metals_config.migrate_legacy_metals_thresholds()
+            if not result["migrated"] or result["count"] != 1:
+                print(f"❌ Metals Migration: unexpected migrate result {result}")
+                return False
+            if legacy_path.exists():
+                print("❌ Metals Migration: legacy file should be removed after migration")
+                return False
+
+            migrated = json.loads(new_path.read_text(encoding="utf-8"))
+            if migrated["AG0"]["upper"] != 8.0 or migrated["AG0"]["lower"] != -8.0:
+                print(f"❌ Metals Migration: AG0 not migrated correctly {migrated['AG0']}")
+                return False
+            if "REMOVED_SYMBOL" in migrated:
+                print("❌ Metals Migration: removed symbol should not be kept")
+                return False
+            if "PT0" not in migrated:
+                print("❌ Metals Migration: new symbols should be filled from defaults")
+                return False
+        finally:
+            metals_config.get_metals_thresholds_path = original_new_path_fn
+            metals_config.get_legacy_metals_thresholds_path = original_legacy_path_fn
+            metals_config._threshold_cache = None
+
+    logger.info("legacy_metals_threshold_migration_ok")
+    print("✅ Legacy Metals Threshold Migration: OK")
+    return True
+
+
+def test_current_metals_threshold_file_compatibility():
+    """测试当前 config/metals_thresholds.json 的旧结构兼容性。"""
+    logger.info("test_current_metals_threshold_file_compatibility_start")
+
+    from pathlib import Path
+    import utils.metals_config as metals_config
+
+    original_new_path_fn = metals_config.get_metals_thresholds_path
+    original_legacy_path_fn = metals_config.get_legacy_metals_thresholds_path
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        new_path = temp_root / "config" / "metals_thresholds.json"
+        legacy_path = temp_root / "data" / "metals_thresholds.json"
+        new_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # 模拟同路径老版本: 缺少新金属、包含已删除金属、部分字段缺失
+        new_path.write_text(
+            json.dumps(
+                {
+                    "AU0": {"upper": 1.2},
+                    "AG0": {"lower": -9.0},
+                    "REMOVED_SYMBOL": {"upper": 99.0, "lower": -99.0},
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        metals_config.get_metals_thresholds_path = lambda: new_path
+        metals_config.get_legacy_metals_thresholds_path = lambda: legacy_path
+        metals_config._threshold_cache = None
+
+        try:
+            normalized = metals_config.load_metals_thresholds(force_reload=True)
+            if normalized["AU0"]["upper"] != 1.2 or normalized["AU0"]["lower"] != -1.0:
+                print(f"❌ Metals Current Config: AU0 normalization mismatch {normalized['AU0']}")
+                return False
+            if normalized["AG0"]["upper"] != 2.0 or normalized["AG0"]["lower"] != -9.0:
+                print(f"❌ Metals Current Config: AG0 normalization mismatch {normalized['AG0']}")
+                return False
+            if "REMOVED_SYMBOL" in normalized:
+                print("❌ Metals Current Config: removed symbol should be discarded")
+                return False
+            if "PT0" not in normalized:
+                print("❌ Metals Current Config: missing new symbol defaults")
+                return False
+
+            rewritten = json.loads(new_path.read_text(encoding="utf-8"))
+            if "REMOVED_SYMBOL" in rewritten:
+                print("❌ Metals Current Config: stale symbol should not remain after rewrite")
+                return False
+            if rewritten["PT0"]["upper"] != 2.0 or rewritten["PT0"]["lower"] != -2.0:
+                print(f"❌ Metals Current Config: new symbol defaults missing {rewritten['PT0']}")
+                return False
+        finally:
+            metals_config.get_metals_thresholds_path = original_new_path_fn
+            metals_config.get_legacy_metals_thresholds_path = original_legacy_path_fn
+            metals_config._threshold_cache = None
+
+    logger.info("current_metals_threshold_file_compatibility_ok")
+    print("✅ Current Metals Threshold File Compatibility: OK")
+    return True
+
+
 def test_module_schedule_windows():
     """测试模块独立时钟和跨日窗口判断。"""
     logger.info("test_module_schedule_windows_start")
@@ -1287,6 +1438,8 @@ def main():
         ("Fetchers (Mock)", test_fetchers_mock),
         ("Strategies", test_strategies),
         ("Metals Conversion", test_metals_conversion_and_thresholds),
+        ("Legacy Metals Migration", test_legacy_metals_threshold_migration),
+        ("Current Metals Config Compatibility", test_current_metals_threshold_file_compatibility),
         ("Convertible Fallback", test_convertible_fallback_estimation),
         ("Futures Margin", test_futures_margin_enrichment),
         ("Active Contracts", test_active_futures_contract_generation),
