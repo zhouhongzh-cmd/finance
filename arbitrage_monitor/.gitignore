@@ -8,6 +8,8 @@ build/
 
 # 环境与敏感配置
 .env
+config/runtime_settings.local.json
+config/metals_thresholds.local.json
 *.db
 *.db-wal
 *.db-shm

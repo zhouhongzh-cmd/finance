@@ -5,8 +5,8 @@ from typing import Any
 
 from config.settings import (
     SYNCABLE_RUNTIME_FIELDS,
-    get_shared_runtime_config_path,
-    save_shared_runtime_config,
+    get_local_runtime_config_path,
+    save_local_runtime_config,
     settings,
 )
 
@@ -60,7 +60,7 @@ GUI_CONFIG_FIELDS = [
 
 
 def get_env_path() -> Path:
-    return get_shared_runtime_config_path()
+    return get_local_runtime_config_path()
 
 
 def get_gui_config_values() -> dict[str, Any]:
@@ -78,7 +78,7 @@ def write_env_updates(updates: dict[str, Any], env_path: Path | None = None) -> 
     filtered_updates = {
         key: value for key, value in updates.items() if key in SYNCABLE_RUNTIME_FIELDS
     }
-    save_shared_runtime_config(settings, filtered_updates, path=config_path)
+    save_local_runtime_config(settings, filtered_updates, path=config_path)
     return config_path
 
 

@@ -23,8 +23,8 @@ st.set_page_config(
 
 st.title("⚙️ 参数设置")
 st.caption(
-    "在 GUI 中调整各模块开关、阈值和独立时钟。模块运行参数写入 `config/runtime_settings.json`，"
-    "金属阈值写入 `config/metals_thresholds.json`，两者都会随仓库同步。"
+    "在 GUI 中调整各模块开关、阈值和独立时钟。仓库里的 `config/*.json` 作为共享基线，"
+    "本机在 GUI 中保存的改动会写入 `config/*.local.json`，因此不会被 `git pull` 覆盖。"
 )
 
 settings.reload_from_env()
@@ -243,7 +243,7 @@ if submitted:
         config_path = write_env_updates(updates)
         apply_runtime_updates(updates)
         st.success(f"模块配置已保存到 {config_path.name}，当前进程已热更新。")
-        st.info("共享配置会跟随仓库同步，其他电脑 `git pull` 后会自动使用同一套参数。")
+        st.info("其他电脑默认仍会跟随仓库里的共享基线；本机保存过的 `.local.json` 不会被拉代码覆盖。")
     except Exception as exc:
         st.error(f"保存失败：{exc}")
 
@@ -251,7 +251,8 @@ if submitted:
 st.markdown("---")
 st.subheader("金属阈值")
 st.caption(
-    "每个金属独立维护上/下阈值。保存后会写入 `config/metals_thresholds.json` 并立即生效。"
+    "每个金属独立维护上/下阈值。仓库里的 `config/metals_thresholds.json` 是共享基线，"
+    "GUI 保存会写入本机的 `config/metals_thresholds.local.json` 并立即生效。"
 )
 st.caption("当前 `config/metals_thresholds.json` 若是旧版本结构，系统会自动补齐新增金属并忽略已废弃项。")
 
@@ -308,14 +309,14 @@ with st.form("metals_threshold_form"):
 if save_thresholds:
     try:
         path = save_metals_thresholds(threshold_updates)
-        st.success(f"金属阈值已保存到 {path.name}，后续策略轮次会立即生效并随仓库同步。")
+        st.success(f"金属阈值已保存到 {path.name}，后续策略轮次会立即生效，且不会被后续 `git pull` 覆盖。")
     except Exception as exc:
         st.error(f"保存金属阈值失败：{exc}")
 
 if reset_thresholds:
     try:
         path = reset_metals_thresholds()
-        st.success(f"金属阈值已恢复默认并写入 {path.name}。")
+        st.success(f"金属阈值已恢复为仓库共享基线，当前使用 {path.name}。")
     except Exception as exc:
         st.error(f"恢复默认阈值失败：{exc}")
 

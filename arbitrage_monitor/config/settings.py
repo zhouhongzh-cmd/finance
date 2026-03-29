@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_FILE_PATH = PROJECT_ROOT / ".env"
 SHARED_RUNTIME_CONFIG_PATH = Path(__file__).resolve().with_name("runtime_settings.json")
+LOCAL_RUNTIME_CONFIG_PATH = Path(__file__).resolve().with_name("runtime_settings.local.json")
 
 LOCAL_ONLY_FIELDS = (
     "FEISHU_WEBHOOK_URL",
@@ -170,7 +171,7 @@ class Settings(BaseSettings):
         refreshed = self.__class__()
         for field_name in LOCAL_ONLY_FIELDS:
             setattr(self, field_name, getattr(refreshed, field_name))
-        apply_shared_runtime_config(self)
+        apply_effective_runtime_config(self)
 
     def apply_updates(self, updates: dict[str, Any]) -> None:
         """用新值更新当前实例，并做基础类型校验。"""
@@ -185,6 +186,10 @@ def get_shared_runtime_config_path() -> Path:
     return SHARED_RUNTIME_CONFIG_PATH
 
 
+def get_local_runtime_config_path() -> Path:
+    return LOCAL_RUNTIME_CONFIG_PATH
+
+
 def _build_runtime_payload(source: Settings) -> dict[str, Any]:
     return {field: getattr(source, field) for field in SYNCABLE_RUNTIME_FIELDS}
 
@@ -196,6 +201,22 @@ def _normalize_runtime_payload(
     merged.update({field: value for field, value in payload.items() if field in SYNCABLE_RUNTIME_FIELDS})
     validated = source.__class__(**merged)
     return _build_runtime_payload(validated)
+
+
+def _normalize_local_runtime_payload(
+    source: Settings, payload: dict[str, Any]
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+
+    merged = {field: getattr(source, field) for field in source.model_fields}
+    merged.update({field: value for field, value in payload.items() if field in SYNCABLE_RUNTIME_FIELDS})
+    validated = source.__class__(**merged)
+    return {
+        field: getattr(validated, field)
+        for field in SYNCABLE_RUNTIME_FIELDS
+        if field in payload
+    }
 
 
 def load_shared_runtime_config(base: Settings, force_reload: bool = False) -> dict[str, Any]:
@@ -235,6 +256,45 @@ def load_shared_runtime_config(base: Settings, force_reload: bool = False) -> di
     return normalized.copy()
 
 
+def load_local_runtime_config(base: Settings, force_reload: bool = False) -> dict[str, Any]:
+    path = get_local_runtime_config_path()
+    if not path.exists():
+        return {}
+
+    try:
+        raw_payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        raw_payload = {}
+
+    if not isinstance(raw_payload, dict):
+        raw_payload = {}
+
+    normalized = _normalize_local_runtime_payload(base, raw_payload)
+    if force_reload or normalized != raw_payload:
+        path.write_text(
+            json.dumps(normalized, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    return normalized.copy()
+
+
+def load_effective_runtime_config(base: Settings, force_reload: bool = False) -> dict[str, Any]:
+    shared = load_shared_runtime_config(base, force_reload=force_reload)
+    local = load_local_runtime_config(base, force_reload=force_reload)
+    if not local:
+        return shared
+
+    merged = shared.copy()
+    merged.update(
+        {
+            field: local[field]
+            for field in SYNCABLE_RUNTIME_FIELDS
+            if field in local
+        }
+    )
+    return _normalize_runtime_payload(base, merged)
+
+
 def save_shared_runtime_config(
     base: Settings,
     updates: dict[str, Any] | None = None,
@@ -259,11 +319,41 @@ def save_shared_runtime_config(
     return config_path
 
 
-def apply_shared_runtime_config(target: Settings) -> None:
-    shared = load_shared_runtime_config(target)
-    for field_name, value in shared.items():
+def save_local_runtime_config(
+    base: Settings,
+    updates: dict[str, Any] | None = None,
+    path: Path | None = None,
+) -> Path:
+    config_path = path or get_local_runtime_config_path()
+    current = load_local_runtime_config(base)
+    if updates:
+        current.update(
+            {
+                field: value
+                for field, value in updates.items()
+                if field in SYNCABLE_RUNTIME_FIELDS
+            }
+        )
+    normalized = _normalize_local_runtime_payload(base, current)
+    shared = load_shared_runtime_config(base)
+    normalized = {
+        field: value
+        for field, value in normalized.items()
+        if shared.get(field) != value
+    }
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(normalized, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def apply_effective_runtime_config(target: Settings) -> None:
+    effective = load_effective_runtime_config(target)
+    for field_name, value in effective.items():
         setattr(target, field_name, value)
 
 
 settings = Settings()
-apply_shared_runtime_config(settings)
+apply_effective_runtime_config(settings)

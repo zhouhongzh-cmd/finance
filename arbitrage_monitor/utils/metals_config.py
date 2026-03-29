@@ -9,12 +9,16 @@ from typing import Any
 from config.metals import METALS_CONFIG, get_default_metals_thresholds
 
 
-_threshold_lock = threading.Lock()
+_threshold_lock = threading.RLock()
 _threshold_cache: dict[str, dict[str, float]] | None = None
 
 
 def get_metals_thresholds_path() -> Path:
     return Path(__file__).resolve().parents[1] / "config" / "metals_thresholds.json"
+
+
+def get_local_metals_thresholds_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "config" / "metals_thresholds.local.json"
 
 
 def get_legacy_metals_thresholds_path() -> Path:
@@ -75,6 +79,24 @@ def _normalize_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[str, flo
     return normalized
 
 
+def _normalize_local_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[str, float]]:
+    defaults = get_default_metals_thresholds()
+    normalized: dict[str, dict[str, float]] = {}
+
+    if not raw:
+        return normalized
+
+    for symbol, values in raw.items():
+        if symbol not in defaults or not isinstance(values, dict):
+            continue
+        normalized[symbol] = {
+            "upper": float(values.get("upper", defaults[symbol]["upper"])),
+            "lower": float(values.get("lower", defaults[symbol]["lower"])),
+        }
+
+    return normalized
+
+
 def load_metals_thresholds(force_reload: bool = False) -> dict[str, dict[str, float]]:
     global _threshold_cache
 
@@ -82,27 +104,44 @@ def load_metals_thresholds(force_reload: bool = False) -> dict[str, dict[str, fl
         if _threshold_cache is not None and not force_reload:
             return deepcopy(_threshold_cache)
 
-        path = get_metals_thresholds_path()
+        shared_path = get_metals_thresholds_path()
 
-        if not path.exists():
+        if not shared_path.exists():
             defaults = _normalize_thresholds(None)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
+            shared_path.parent.mkdir(parents=True, exist_ok=True)
+            shared_path.write_text(
                 json.dumps(defaults, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
             _threshold_cache = defaults
             return deepcopy(_threshold_cache)
 
-        payload = _load_threshold_payload(path)
-        normalized = _normalize_thresholds(payload)
-
-        _threshold_cache = normalized
-        if payload != _threshold_cache:
-            path.write_text(
-                json.dumps(_threshold_cache, ensure_ascii=False, indent=2) + "\n",
+        shared_payload = _load_threshold_payload(shared_path)
+        shared_thresholds = _normalize_thresholds(shared_payload)
+        if shared_payload != shared_thresholds:
+            shared_path.write_text(
+                json.dumps(shared_thresholds, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
+
+        local_path = get_local_metals_thresholds_path()
+        local_payload = _load_threshold_payload(local_path) if local_path.exists() else None
+        local_thresholds = _normalize_local_thresholds(local_payload)
+        if local_payload is not None and local_payload != local_thresholds:
+            local_path.write_text(
+                json.dumps(local_thresholds, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+        effective = deepcopy(shared_thresholds)
+        if local_payload is not None:
+            for symbol, values in local_thresholds.items():
+                effective[symbol] = {
+                    "upper": float(values["upper"]),
+                    "lower": float(values["lower"]),
+                }
+
+        _threshold_cache = effective
         return deepcopy(_threshold_cache)
 
 
@@ -110,14 +149,23 @@ def save_metals_thresholds(thresholds: dict[str, dict[str, float]]) -> Path:
     global _threshold_cache
 
     with _threshold_lock:
-        normalized = _normalize_thresholds(thresholds)
-        path = get_metals_thresholds_path()
+        normalized = _normalize_local_thresholds(thresholds)
+        shared_thresholds = _normalize_thresholds(_load_threshold_payload(get_metals_thresholds_path()))
+        normalized = {
+            symbol: values
+            for symbol, values in normalized.items()
+            if symbol not in shared_thresholds
+            or float(shared_thresholds[symbol]["upper"]) != float(values["upper"])
+            or float(shared_thresholds[symbol]["lower"]) != float(values["lower"])
+        }
+        path = get_local_metals_thresholds_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(normalized, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
-        _threshold_cache = normalized
+        _threshold_cache = None
+        load_metals_thresholds(force_reload=True)
         return path
 
 
@@ -167,7 +215,15 @@ def migrate_legacy_metals_thresholds(delete_legacy: bool = True) -> dict[str, An
 
 
 def reset_metals_thresholds() -> Path:
-    return save_metals_thresholds(get_default_metals_thresholds())
+    global _threshold_cache
+
+    with _threshold_lock:
+        path = get_local_metals_thresholds_path()
+        if path.exists():
+            path.unlink()
+        _threshold_cache = None
+    load_metals_thresholds(force_reload=True)
+    return get_metals_thresholds_path()
 
 
 def get_effective_metal_threshold(symbol: str) -> dict[str, float]:

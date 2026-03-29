@@ -124,14 +124,14 @@ def test_notifier():
 
 
 def test_runtime_config_writer():
-    """测试 GUI 配置回写共享 JSON 的行为。"""
+    """测试 GUI 配置回写本机 local JSON 的行为。"""
     logger.info("test_runtime_config_writer_start")
 
     from pathlib import Path
     from utils.runtime_config import write_env_updates
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        config_path = Path(temp_dir) / "runtime_settings.json"
+        config_path = Path(temp_dir) / "runtime_settings.local.json"
         config_path.write_text(
             json.dumps(
                 {
@@ -176,6 +176,73 @@ def test_runtime_config_writer():
 
     logger.info("runtime_config_writer_ok")
     print("✅ Runtime Config Writer: OK")
+    return True
+
+
+def test_runtime_config_local_override():
+    """测试本机 runtime local 配置优先于仓库共享基线。"""
+    logger.info("test_runtime_config_local_override_start")
+
+    from pathlib import Path
+    import config.settings as settings_module
+
+    original_shared_path = settings_module.SHARED_RUNTIME_CONFIG_PATH
+    original_local_path = settings_module.LOCAL_RUNTIME_CONFIG_PATH
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        shared_path = temp_root / "config" / "runtime_settings.json"
+        local_path = temp_root / "config" / "runtime_settings.local.json"
+        shared_path.parent.mkdir(parents=True, exist_ok=True)
+
+        shared_path.write_text(
+            json.dumps(
+                {
+                    "ENABLE_CONVERTIBLE_MONITOR": True,
+                    "ENABLE_SENTIMENT_MONITOR": True,
+                    "METALS_CRUISE_INTERVAL_MINUTES": 15,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        local_path.write_text(
+            json.dumps(
+                {
+                    "ENABLE_CONVERTIBLE_MONITOR": False,
+                    "METALS_CRUISE_INTERVAL_MINUTES": 21,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        settings_module.SHARED_RUNTIME_CONFIG_PATH = shared_path
+        settings_module.LOCAL_RUNTIME_CONFIG_PATH = local_path
+        probe = settings_module.Settings()
+
+        try:
+            effective = settings_module.load_effective_runtime_config(probe, force_reload=True)
+        finally:
+            settings_module.SHARED_RUNTIME_CONFIG_PATH = original_shared_path
+            settings_module.LOCAL_RUNTIME_CONFIG_PATH = original_local_path
+
+    if effective["ENABLE_CONVERTIBLE_MONITOR"] is not False:
+        print("❌ Runtime Local Override: local bool override not applied")
+        return False
+    if effective["ENABLE_SENTIMENT_MONITOR"] is not True:
+        print("❌ Runtime Local Override: shared value should remain when local missing")
+        return False
+    if effective["METALS_CRUISE_INTERVAL_MINUTES"] != 21:
+        print("❌ Runtime Local Override: local interval override not applied")
+        return False
+
+    logger.info("runtime_config_local_override_ok")
+    print("✅ Runtime Config Local Override: OK")
     return True
 
 
@@ -733,11 +800,13 @@ def test_legacy_metals_threshold_migration():
     import utils.metals_config as metals_config
 
     original_new_path_fn = metals_config.get_metals_thresholds_path
+    original_local_path_fn = metals_config.get_local_metals_thresholds_path
     original_legacy_path_fn = metals_config.get_legacy_metals_thresholds_path
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_root = Path(temp_dir)
         new_path = temp_root / "config" / "metals_thresholds.json"
+        local_path = temp_root / "config" / "metals_thresholds.local.json"
         legacy_path = temp_root / "data" / "metals_thresholds.json"
         new_path.parent.mkdir(parents=True, exist_ok=True)
         legacy_path.parent.mkdir(parents=True, exist_ok=True)
@@ -769,6 +838,7 @@ def test_legacy_metals_threshold_migration():
         )
 
         metals_config.get_metals_thresholds_path = lambda: new_path
+        metals_config.get_local_metals_thresholds_path = lambda: local_path
         metals_config.get_legacy_metals_thresholds_path = lambda: legacy_path
         metals_config._threshold_cache = None
 
@@ -789,18 +859,20 @@ def test_legacy_metals_threshold_migration():
                 print("❌ Metals Migration: legacy file should be removed after migration")
                 return False
 
-            migrated = json.loads(new_path.read_text(encoding="utf-8"))
+            migrated = json.loads(local_path.read_text(encoding="utf-8"))
             if migrated["AG0"]["upper"] != 8.0 or migrated["AG0"]["lower"] != -8.0:
                 print(f"❌ Metals Migration: AG0 not migrated correctly {migrated['AG0']}")
                 return False
             if "REMOVED_SYMBOL" in migrated:
                 print("❌ Metals Migration: removed symbol should not be kept")
                 return False
-            if "PT0" not in migrated:
-                print("❌ Metals Migration: new symbols should be filled from defaults")
+            effective = metals_config.load_metals_thresholds(force_reload=True)
+            if "PT0" not in effective:
+                print("❌ Metals Migration: effective thresholds should still include new symbols")
                 return False
         finally:
             metals_config.get_metals_thresholds_path = original_new_path_fn
+            metals_config.get_local_metals_thresholds_path = original_local_path_fn
             metals_config.get_legacy_metals_thresholds_path = original_legacy_path_fn
             metals_config._threshold_cache = None
 
@@ -817,11 +889,13 @@ def test_current_metals_threshold_file_compatibility():
     import utils.metals_config as metals_config
 
     original_new_path_fn = metals_config.get_metals_thresholds_path
+    original_local_path_fn = metals_config.get_local_metals_thresholds_path
     original_legacy_path_fn = metals_config.get_legacy_metals_thresholds_path
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_root = Path(temp_dir)
         new_path = temp_root / "config" / "metals_thresholds.json"
+        local_path = temp_root / "config" / "metals_thresholds.local.json"
         legacy_path = temp_root / "data" / "metals_thresholds.json"
         new_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -841,6 +915,7 @@ def test_current_metals_threshold_file_compatibility():
         )
 
         metals_config.get_metals_thresholds_path = lambda: new_path
+        metals_config.get_local_metals_thresholds_path = lambda: local_path
         metals_config.get_legacy_metals_thresholds_path = lambda: legacy_path
         metals_config._threshold_cache = None
 
@@ -868,11 +943,79 @@ def test_current_metals_threshold_file_compatibility():
                 return False
         finally:
             metals_config.get_metals_thresholds_path = original_new_path_fn
+            metals_config.get_local_metals_thresholds_path = original_local_path_fn
             metals_config.get_legacy_metals_thresholds_path = original_legacy_path_fn
             metals_config._threshold_cache = None
 
     logger.info("current_metals_threshold_file_compatibility_ok")
     print("✅ Current Metals Threshold File Compatibility: OK")
+    return True
+
+
+def test_metals_threshold_local_override():
+    """测试本机金属阈值 local 文件优先于仓库共享基线。"""
+    logger.info("test_metals_threshold_local_override_start")
+
+    from pathlib import Path
+    import utils.metals_config as metals_config
+
+    original_new_path_fn = metals_config.get_metals_thresholds_path
+    original_local_path_fn = metals_config.get_local_metals_thresholds_path
+    original_legacy_path_fn = metals_config.get_legacy_metals_thresholds_path
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        shared_path = temp_root / "config" / "metals_thresholds.json"
+        local_path = temp_root / "config" / "metals_thresholds.local.json"
+        legacy_path = temp_root / "data" / "metals_thresholds.json"
+        shared_path.parent.mkdir(parents=True, exist_ok=True)
+
+        shared_path.write_text(
+            json.dumps(
+                {
+                    "AU0": {"upper": 1.0, "lower": -1.0},
+                    "AG0": {"upper": 2.0, "lower": -2.0},
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        local_path.write_text(
+            json.dumps(
+                {
+                    "AG0": {"upper": 20.0, "lower": -20.0},
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        metals_config.get_metals_thresholds_path = lambda: shared_path
+        metals_config.get_local_metals_thresholds_path = lambda: local_path
+        metals_config.get_legacy_metals_thresholds_path = lambda: legacy_path
+        metals_config._threshold_cache = None
+
+        try:
+            effective = metals_config.load_metals_thresholds(force_reload=True)
+        finally:
+            metals_config.get_metals_thresholds_path = original_new_path_fn
+            metals_config.get_local_metals_thresholds_path = original_local_path_fn
+            metals_config.get_legacy_metals_thresholds_path = original_legacy_path_fn
+            metals_config._threshold_cache = None
+
+    if effective["AG0"]["upper"] != 20.0 or effective["AG0"]["lower"] != -20.0:
+        print(f"❌ Metals Local Override: local AG0 override missing {effective['AG0']}")
+        return False
+    if effective["AU0"]["upper"] != 1.0 or effective["AU0"]["lower"] != -1.0:
+        print(f"❌ Metals Local Override: shared AU0 baseline missing {effective['AU0']}")
+        return False
+
+    logger.info("metals_threshold_local_override_ok")
+    print("✅ Metals Threshold Local Override: OK")
     return True
 
 
@@ -1430,6 +1573,7 @@ def main():
         ("Database Manager", test_db_manager),
         ("Notifier", test_notifier),
         ("Runtime Config Writer", test_runtime_config_writer),
+        ("Runtime Config Local Override", test_runtime_config_local_override),
         ("Strategy Hot Reload", test_strategy_threshold_hot_reload),
         ("Strategy Enable Switches", test_strategy_enable_switches),
         ("Scheduler Runtime Sync", test_scheduler_runtime_settings_sync),
@@ -1440,6 +1584,7 @@ def main():
         ("Metals Conversion", test_metals_conversion_and_thresholds),
         ("Legacy Metals Migration", test_legacy_metals_threshold_migration),
         ("Current Metals Config Compatibility", test_current_metals_threshold_file_compatibility),
+        ("Metals Threshold Local Override", test_metals_threshold_local_override),
         ("Convertible Fallback", test_convertible_fallback_estimation),
         ("Futures Margin", test_futures_margin_enrichment),
         ("Active Contracts", test_active_futures_contract_generation),
