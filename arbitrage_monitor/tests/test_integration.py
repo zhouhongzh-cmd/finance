@@ -246,6 +246,91 @@ def test_runtime_config_local_override():
     return True
 
 
+def test_futures_dual_threshold_trigger():
+    """测试期指贴水率阈值和年化贴水率阈值任一触发即可报警。"""
+    logger.info("test_futures_dual_threshold_trigger_start")
+
+    from config.settings import settings
+    from models.market_data import FuturesData
+    from strategies.futures_strategy import FuturesDiscountStrategy
+
+    original = {
+        "FUTURES_DISCOUNT_PERCENT_THRESHOLD": settings.FUTURES_DISCOUNT_PERCENT_THRESHOLD,
+        "FUTURES_DISCOUNT_RATE_THRESHOLD": settings.FUTURES_DISCOUNT_RATE_THRESHOLD,
+        "ENABLE_FUTURES_DISCOUNT_PERCENT_THRESHOLD": settings.ENABLE_FUTURES_DISCOUNT_PERCENT_THRESHOLD,
+        "ENABLE_FUTURES_DISCOUNT_RATE_THRESHOLD": settings.ENABLE_FUTURES_DISCOUNT_RATE_THRESHOLD,
+    }
+
+    try:
+        settings.apply_updates(
+            {
+                "ENABLE_FUTURES_DISCOUNT_PERCENT_THRESHOLD": True,
+                "ENABLE_FUTURES_DISCOUNT_RATE_THRESHOLD": True,
+                "FUTURES_DISCOUNT_PERCENT_THRESHOLD": 1.0,
+                "FUTURES_DISCOUNT_RATE_THRESHOLD": 20.0,
+            }
+        )
+        strategy = FuturesDiscountStrategy()
+        percent_only = strategy.evaluate(
+            [
+                FuturesData(
+                    symbol="IF2604",
+                    timestamp=datetime.now(),
+                    price=3500,
+                    spot_price=3540,
+                    discount_rate=1.2,
+                    product_code="IF",
+                    days_to_maturity=40,
+                )
+            ]
+        )
+        annualized_only = strategy.evaluate(
+            [
+                FuturesData(
+                    symbol="IC2606",
+                    timestamp=datetime.now(),
+                    price=5100,
+                    spot_price=5120,
+                    discount_rate=0.4,
+                    product_code="IC",
+                    days_to_maturity=5,
+                )
+            ]
+        )
+        none_triggered = strategy.evaluate(
+            [
+                FuturesData(
+                    symbol="IH2604",
+                    timestamp=datetime.now(),
+                    price=2400,
+                    spot_price=2410,
+                    discount_rate=0.2,
+                    product_code="IH",
+                    days_to_maturity=20,
+                )
+            ]
+        )
+    finally:
+        settings.apply_updates(original)
+
+    if len(percent_only) != 1:
+        print(f"❌ Futures Dual Threshold: expected percent-only trigger, got {len(percent_only)}")
+        return False
+    if len(annualized_only) != 1:
+        print(f"❌ Futures Dual Threshold: expected annualized-only trigger, got {len(annualized_only)}")
+        return False
+    if none_triggered:
+        print("❌ Futures Dual Threshold: non-triggering sample should not alert")
+        return False
+    if "贴水率阈值" not in percent_only[0].message or "年化贴水率阈值" not in percent_only[0].message:
+        print("❌ Futures Dual Threshold: signal message missing threshold detail")
+        return False
+
+    logger.info("futures_dual_threshold_trigger_ok")
+    print("✅ Futures Dual Threshold: OK")
+    return True
+
+
 def test_strategy_threshold_hot_reload():
     """测试策略阈值热更新后立即影响判定。"""
     logger.info("test_strategy_threshold_hot_reload_start")
@@ -258,11 +343,15 @@ def test_strategy_threshold_hot_reload():
     original = {
         "SENTIMENT_HOT_SCORE_THRESHOLD": settings.SENTIMENT_HOT_SCORE_THRESHOLD,
         "SENTIMENT_PULSE_THRESHOLD": settings.SENTIMENT_PULSE_THRESHOLD,
+        "ENABLE_SENTIMENT_HOT_SCORE_THRESHOLD": settings.ENABLE_SENTIMENT_HOT_SCORE_THRESHOLD,
+        "ENABLE_SENTIMENT_PULSE_THRESHOLD": settings.ENABLE_SENTIMENT_PULSE_THRESHOLD,
     }
 
     try:
         settings.apply_updates(
             {
+                "ENABLE_SENTIMENT_HOT_SCORE_THRESHOLD": True,
+                "ENABLE_SENTIMENT_PULSE_THRESHOLD": True,
                 "SENTIMENT_HOT_SCORE_THRESHOLD": 500,
                 "SENTIMENT_PULSE_THRESHOLD": -0.5,
             }
@@ -344,6 +433,128 @@ def test_strategy_enable_switches():
     return True
 
 
+def test_mode_enable_switches():
+    """测试模块巡航/盯盘开关对运行模式生效。"""
+    logger.info("test_mode_enable_switches_start")
+
+    import core_scheduler as cs
+    from config.settings import settings
+
+    original_run_strategy_task = cs.run_strategy_task
+    original_sync_runtime_settings = cs.sync_runtime_settings
+    original_is_module_watch_hours = cs.is_module_watch_hours
+    original = {
+        "ENABLE_FUTURES_MONITOR": settings.ENABLE_FUTURES_MONITOR,
+        "ENABLE_FUTURES_CRUISE": settings.ENABLE_FUTURES_CRUISE,
+        "ENABLE_FUTURES_WATCH": settings.ENABLE_FUTURES_WATCH,
+    }
+    executed: list[str] = []
+
+    def fake_run_strategy_task(fetcher, strategy, strategy_name: str):
+        executed.append(strategy_name)
+        return {"status": "SUCCESS"}
+
+    try:
+        cs.run_strategy_task = fake_run_strategy_task
+        cs.sync_runtime_settings = lambda: None
+        cs.is_module_watch_hours = lambda prefix, now=None: prefix == "FUTURES"
+        settings.apply_updates(
+            {
+                "ENABLE_FUTURES_MONITOR": True,
+                "ENABLE_FUTURES_CRUISE": True,
+                "ENABLE_FUTURES_WATCH": False,
+            }
+        )
+        cs.run_futures_cruise_mode()
+        cs.run_futures_watch_mode()
+    finally:
+        settings.apply_updates(original)
+        cs.run_strategy_task = original_run_strategy_task
+        cs.sync_runtime_settings = original_sync_runtime_settings
+        cs.is_module_watch_hours = original_is_module_watch_hours
+
+    if executed != ["Futures_Discount_Arbitrage"]:
+        print(f"❌ Mode Enable Switches: unexpected executed strategies {executed}")
+        return False
+
+    logger.info("mode_enable_switches_ok", executed=executed)
+    print("✅ Mode Enable Switches: OK")
+    return True
+
+
+def test_threshold_enable_switches():
+    """测试阈值开关关闭后不再参与策略触发。"""
+    logger.info("test_threshold_enable_switches_start")
+
+    from config.settings import settings
+    from models.market_data import FuturesData, SentimentData
+    from strategies.futures_strategy import FuturesDiscountStrategy
+    from strategies.sentiment_strategy import SentimentStrategy
+
+    original = {
+        "ENABLE_FUTURES_DISCOUNT_PERCENT_THRESHOLD": settings.ENABLE_FUTURES_DISCOUNT_PERCENT_THRESHOLD,
+        "ENABLE_FUTURES_DISCOUNT_RATE_THRESHOLD": settings.ENABLE_FUTURES_DISCOUNT_RATE_THRESHOLD,
+        "FUTURES_DISCOUNT_PERCENT_THRESHOLD": settings.FUTURES_DISCOUNT_PERCENT_THRESHOLD,
+        "FUTURES_DISCOUNT_RATE_THRESHOLD": settings.FUTURES_DISCOUNT_RATE_THRESHOLD,
+        "ENABLE_SENTIMENT_HOT_SCORE_THRESHOLD": settings.ENABLE_SENTIMENT_HOT_SCORE_THRESHOLD,
+        "ENABLE_SENTIMENT_PULSE_THRESHOLD": settings.ENABLE_SENTIMENT_PULSE_THRESHOLD,
+        "SENTIMENT_HOT_SCORE_THRESHOLD": settings.SENTIMENT_HOT_SCORE_THRESHOLD,
+        "SENTIMENT_PULSE_THRESHOLD": settings.SENTIMENT_PULSE_THRESHOLD,
+    }
+
+    try:
+        settings.apply_updates(
+            {
+                "ENABLE_FUTURES_DISCOUNT_PERCENT_THRESHOLD": False,
+                "ENABLE_FUTURES_DISCOUNT_RATE_THRESHOLD": False,
+                "FUTURES_DISCOUNT_PERCENT_THRESHOLD": 1.0,
+                "FUTURES_DISCOUNT_RATE_THRESHOLD": 8.0,
+                "ENABLE_SENTIMENT_HOT_SCORE_THRESHOLD": False,
+                "ENABLE_SENTIMENT_PULSE_THRESHOLD": False,
+                "SENTIMENT_HOT_SCORE_THRESHOLD": 500,
+                "SENTIMENT_PULSE_THRESHOLD": -0.5,
+            }
+        )
+        futures_signals = FuturesDiscountStrategy().evaluate(
+            [
+                FuturesData(
+                    symbol="IF2604",
+                    timestamp=datetime.now(),
+                    price=3500,
+                    spot_price=3540,
+                    discount_rate=1.2,
+                    product_code="IF",
+                    days_to_maturity=5,
+                )
+            ]
+        )
+        sentiment_signals = SentimentStrategy().evaluate(
+            [
+                SentimentData(
+                    symbol="TEST001",
+                    timestamp=datetime.now(),
+                    name="TEST001",
+                    hot_score=600,
+                    sentiment_pulse=-0.6,
+                    rank=1,
+                )
+            ]
+        )
+    finally:
+        settings.apply_updates(original)
+
+    if futures_signals:
+        print("❌ Threshold Enable Switches: futures thresholds disabled but still triggered")
+        return False
+    if sentiment_signals:
+        print("❌ Threshold Enable Switches: sentiment thresholds disabled but still triggered")
+        return False
+
+    logger.info("threshold_enable_switches_ok")
+    print("✅ Threshold Enable Switches: OK")
+    return True
+
+
 def test_scheduler_runtime_settings_sync():
     """测试调度频率调整后 job trigger 会重建。"""
     logger.info("test_scheduler_runtime_settings_sync_start")
@@ -421,6 +632,7 @@ def test_scheduler_runtime_settings_sync():
                     "CB_DOUBLE_LOW_THRESHOLD": 130.0,
                     "CB_YTM_THRESHOLD": 2.0,
                     "CB_SAFE_PRICE_THRESHOLD": 130.0,
+                    "FUTURES_DISCOUNT_PERCENT_THRESHOLD": 1.0,
                     "FUTURES_DISCOUNT_RATE_THRESHOLD": 8.0,
                     "SENTIMENT_HOT_SCORE_THRESHOLD": 5000000,
                     "SENTIMENT_PULSE_THRESHOLD": -0.8,
@@ -520,6 +732,7 @@ def test_scheduler_runtime_settings_sync():
                         "CB_DOUBLE_LOW_THRESHOLD": 130.0,
                         "CB_YTM_THRESHOLD": 2.0,
                         "CB_SAFE_PRICE_THRESHOLD": 130.0,
+                        "FUTURES_DISCOUNT_PERCENT_THRESHOLD": 1.0,
                         "FUTURES_DISCOUNT_RATE_THRESHOLD": 8.0,
                         "SENTIMENT_HOT_SCORE_THRESHOLD": 5000000,
                         "SENTIMENT_PULSE_THRESHOLD": -0.8,
@@ -651,6 +864,54 @@ def test_strategies():
     logger.info("metals_strategy_evaluated", signals=len(metals_signals))
     print(f"✅ Metals Strategy: {len(metals_signals)} signals")
 
+    return True
+
+
+def test_dashboard_table_ordering():
+    """测试期指和金属主表的固定排序与前置列顺序。"""
+    logger.info("test_dashboard_table_ordering_start")
+
+    from models.market_data import FuturesData, MetalArbitrageData
+    from utils.dashboard_tables import (
+        FUTURES_FRONT_COLUMNS,
+        METALS_FRONT_COLUMNS,
+        build_futures_live_tables,
+        build_metals_live_tables,
+    )
+
+    futures_data = [
+        FuturesData(symbol="IC2606", timestamp=datetime.now(), price=1, spot_price=2, discount_rate=0.5, product_code="IC", days_to_maturity=20),
+        FuturesData(symbol="IH2604", timestamp=datetime.now(), price=1, spot_price=2, discount_rate=0.5, product_code="IH", days_to_maturity=5),
+        FuturesData(symbol="IF2605", timestamp=datetime.now(), price=1, spot_price=2, discount_rate=0.5, product_code="IF", days_to_maturity=10),
+        FuturesData(symbol="IM2603", timestamp=datetime.now(), price=1, spot_price=2, discount_rate=0.5, product_code="IM", days_to_maturity=1),
+        FuturesData(symbol="IH2606", timestamp=datetime.now(), price=1, spot_price=2, discount_rate=0.5, product_code="IH", days_to_maturity=30),
+    ]
+    futures_df, _ = build_futures_live_tables(futures_data, [])
+    expected_futures_order = ["IH2604", "IH2606", "IF2605", "IC2606", "IM2603"]
+    if futures_df["名称"].tolist() != expected_futures_order:
+        print(f"❌ Dashboard Ordering: unexpected futures order {futures_df['名称'].tolist()}")
+        return False
+    if futures_df.columns[: len(FUTURES_FRONT_COLUMNS)].tolist() != FUTURES_FRONT_COLUMNS:
+        print("❌ Dashboard Ordering: futures front columns mismatch")
+        return False
+
+    metals_data = [
+        MetalArbitrageData(symbol="CU0:CAD", timestamp=datetime.now(), metal_symbol="CU0", metal_name="铜", benchmark_symbol="CAD", benchmark_name="LME铜3个月", benchmark_display_name="LME铜", domestic_symbol="cu0", domestic_name="沪铜主力", domestic_unit="元/吨", category="base", dom_price=1, for_price_usd=1, for_price_cny=1, exchange_rate=1, implied_rate=1, spread=1, spread_pct=1),
+        MetalArbitrageData(symbol="AU0:GC", timestamp=datetime.now(), metal_symbol="AU0", metal_name="黄金", benchmark_symbol="GC", benchmark_name="COMEX黄金", benchmark_display_name="COMEX GC", domestic_symbol="au0", domestic_name="沪金主力", domestic_unit="元/克", category="precious", dom_price=1, for_price_usd=1, for_price_cny=1, exchange_rate=1, implied_rate=1, spread=1, spread_pct=1),
+        MetalArbitrageData(symbol="AG0:SI", timestamp=datetime.now(), metal_symbol="AG0", metal_name="白银", benchmark_symbol="SI", benchmark_name="COMEX白银", benchmark_display_name="COMEX SI", domestic_symbol="ag0", domestic_name="沪银主力", domestic_unit="元/千克", category="precious", dom_price=1, for_price_usd=1, for_price_cny=1, exchange_rate=1, implied_rate=1, spread=1, spread_pct=1),
+        MetalArbitrageData(symbol="PT0:XPT", timestamp=datetime.now(), metal_symbol="PT0", metal_name="铂金", benchmark_symbol="XPT", benchmark_name="伦敦铂", benchmark_display_name="LME铂", domestic_symbol="pt0", domestic_name="沪铂主力", domestic_unit="元/克", category="precious", dom_price=1, for_price_usd=1, for_price_cny=1, exchange_rate=1, implied_rate=1, spread=1, spread_pct=1),
+    ]
+    metals_df, _ = build_metals_live_tables(metals_data, [])
+    expected_metals_order = ["黄金", "白银", "铂金", "铜"]
+    if metals_df["品种名称"].tolist() != expected_metals_order:
+        print(f"❌ Dashboard Ordering: unexpected metals order {metals_df['品种名称'].tolist()}")
+        return False
+    if metals_df.columns[: len(METALS_FRONT_COLUMNS)].tolist() != METALS_FRONT_COLUMNS:
+        print("❌ Dashboard Ordering: metals front columns mismatch")
+        return False
+
+    logger.info("dashboard_table_ordering_ok")
+    print("✅ Dashboard Table Ordering: OK")
     return True
 
 
@@ -1016,6 +1277,110 @@ def test_metals_threshold_local_override():
 
     logger.info("metals_threshold_local_override_ok")
     print("✅ Metals Threshold Local Override: OK")
+    return True
+
+
+def test_source_health_tracking():
+    """测试数据源健康度记录。"""
+    logger.info("test_source_health_tracking_start")
+
+    from utils.source_health import record_source_health
+
+    db = DBManager()
+    source_name = f"test_source_health_{datetime.now().timestamp()}"
+    try:
+        record_source_health(source_name, success=False, duration_ms=120, error_summary="boom")
+        record_source_health(
+            source_name,
+            success=True,
+            duration_ms=80,
+            active_source="fallback",
+            is_fallback=True,
+        )
+        rows = [row for row in db.get_source_health_statuses() if row[0] == source_name]
+        if len(rows) != 1:
+            print("❌ Source Health: missing recorded row")
+            return False
+        row = rows[0]
+        if row[3] != 0 or row[7] <= 0 or row[10] != "fallback" or row[11] != 1:
+            print(f"❌ Source Health: unexpected row state {row}")
+            return False
+    finally:
+        with db.get_connection() as conn:
+            conn.execute("DELETE FROM source_health_status WHERE source_name = ?", (source_name,))
+            conn.commit()
+
+    logger.info("source_health_tracking_ok")
+    print("✅ Source Health Tracking: OK")
+    return True
+
+
+def test_config_audit_history():
+    """测试配置审计记录。"""
+    logger.info("test_config_audit_history_start")
+
+    from utils.config_audit import record_config_changes
+
+    db = DBManager()
+    key = f"TEST_CONFIG_{datetime.now().timestamp()}"
+    try:
+        changed = record_config_changes(
+            {key: "old"},
+            {key: "new"},
+            source="dashboard_gui",
+            destination="local_override",
+        )
+        if changed != 1:
+            print(f"❌ Config Audit: expected 1 changed row, got {changed}")
+            return False
+        rows = [row for row in db.get_recent_config_changes(limit=20) if row[1] == key]
+        if not rows:
+            print("❌ Config Audit: missing persisted audit row")
+            return False
+        if rows[0][4] != "dashboard_gui" or rows[0][5] != "local_override":
+            print(f"❌ Config Audit: unexpected source/destination {rows[0]}")
+            return False
+    finally:
+        with db.get_connection() as conn:
+            conn.execute("DELETE FROM config_change_history WHERE config_key = ?", (key,))
+            conn.commit()
+
+    logger.info("config_audit_history_ok")
+    print("✅ Config Audit History: OK")
+    return True
+
+
+def test_job_run_status_tracking():
+    """测试任务运行状态记录。"""
+    logger.info("test_job_run_status_tracking_start")
+
+    db = DBManager()
+    job_name = f"test_job_status_{datetime.now().timestamp()}"
+    started_at = datetime.now().isoformat()
+    try:
+        db.mark_job_started(job_name, started_at)
+        db.mark_job_skipped(job_name)
+        db.mark_job_finished(
+            job_name,
+            finished_at=datetime.now().isoformat(),
+            status="SUCCESS",
+            duration_ms=123.0,
+        )
+        rows = [row for row in db.get_job_run_statuses() if row[0] == job_name]
+        if not rows:
+            print("❌ Job Status: missing job row")
+            return False
+        row = rows[0]
+        if row[1] != 0 or row[5] != "SUCCESS" or row[7] < 1:
+            print(f"❌ Job Status: unexpected row {row}")
+            return False
+    finally:
+        with db.get_connection() as conn:
+            conn.execute("DELETE FROM job_run_status WHERE job_name = ?", (job_name,))
+            conn.commit()
+
+    logger.info("job_run_status_tracking_ok")
+    print("✅ Job Run Status Tracking: OK")
     return True
 
 
@@ -1574,17 +1939,24 @@ def main():
         ("Notifier", test_notifier),
         ("Runtime Config Writer", test_runtime_config_writer),
         ("Runtime Config Local Override", test_runtime_config_local_override),
+        ("Futures Dual Threshold", test_futures_dual_threshold_trigger),
         ("Strategy Hot Reload", test_strategy_threshold_hot_reload),
         ("Strategy Enable Switches", test_strategy_enable_switches),
+        ("Mode Enable Switches", test_mode_enable_switches),
+        ("Threshold Enable Switches", test_threshold_enable_switches),
         ("Scheduler Runtime Sync", test_scheduler_runtime_settings_sync),
         ("Cooldown Restore", test_cooldown_restore_roundtrip),
         ("Retention Cleanup", test_retention_cleanup),
         ("Fetchers (Mock)", test_fetchers_mock),
         ("Strategies", test_strategies),
         ("Metals Conversion", test_metals_conversion_and_thresholds),
+        ("Dashboard Table Ordering", test_dashboard_table_ordering),
         ("Legacy Metals Migration", test_legacy_metals_threshold_migration),
         ("Current Metals Config Compatibility", test_current_metals_threshold_file_compatibility),
         ("Metals Threshold Local Override", test_metals_threshold_local_override),
+        ("Source Health Tracking", test_source_health_tracking),
+        ("Config Audit History", test_config_audit_history),
+        ("Job Run Status Tracking", test_job_run_status_tracking),
         ("Convertible Fallback", test_convertible_fallback_estimation),
         ("Futures Margin", test_futures_margin_enrichment),
         ("Active Contracts", test_active_futures_contract_generation),

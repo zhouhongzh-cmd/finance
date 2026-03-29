@@ -26,6 +26,10 @@ from strategies.cb_strategy import ConvertibleStrategy
 from strategies.futures_strategy import FuturesDiscountStrategy
 from strategies.metals_strategy import MetalsArbitrageStrategy
 from strategies.sentiment_strategy import SentimentStrategy
+from utils.dashboard_tables import (
+    build_futures_live_tables,
+    build_metals_live_tables,
+)
 from utils.db_manager import DBManager
 
 
@@ -164,52 +168,7 @@ def fetch_futures_live_view() -> tuple[pd.DataFrame, pd.DataFrame]:
     data = futures_fetcher.fetch_live()
     db_manager.save_futures_live_snapshots(data)
     signals = FuturesDiscountStrategy().evaluate(data)
-    signal_map = {signal.asset: level_badge(signal.level) for signal in signals}
-
-    rows = []
-    for item in data:
-        annualized = item.discount_rate * (365 / max(item.days_to_maturity, 1))
-        maturity_date = (datetime.now() + timedelta(days=item.days_to_maturity)).strftime(
-            "%Y-%m-%d"
-        )
-        gap_points = round(item.spot_price - item.price, 2)
-        price_per_index = round(item.contract_multiplier, 2)
-        rows.append(
-            {
-                "名称": item.symbol,
-                "时间": item.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-                "期指价格": round(item.price, 2),
-                "指数点位": round(item.spot_price, 2),
-                "到期日": maturity_date,
-                "剩余天数": item.days_to_maturity,
-                "贴水点数": gap_points,
-                "贴水率(%)": round(item.discount_rate, 4),
-                "年化贴水率(%)": round(annualized, 4),
-                "单点指数价格": price_per_index,
-                "一手市值": round(item.notional_per_lot, 2),
-                "保证金比例": round(item.margin_ratio, 2),
-                "单手保证金": round(item.margin_required_per_lot, 2),
-                "品种": item.product_code,
-                "信号": signal_map.get(item.symbol, ""),
-            }
-        )
-
-    signal_rows = []
-    for signal in signals:
-        signal_rows.append(
-            {
-                "级别": level_badge(signal.level),
-                "标的": signal.asset,
-                "策略": signal.strategy_name,
-                "详情": signal.message.replace("\n", " | "),
-            }
-        )
-
-    futures_df = pd.DataFrame(rows).sort_values(
-        by=["年化贴水率(%)", "贴水率(%)"], ascending=[False, False]
-    )
-    signal_df = pd.DataFrame(signal_rows)
-    return futures_df, signal_df
+    return build_futures_live_tables(data, signals)
 
 
 @st.cache_data(ttl=60)
@@ -217,47 +176,7 @@ def fetch_metals_live_view() -> tuple[pd.DataFrame, pd.DataFrame]:
     data = metals_fetcher.fetch_live()
     db_manager.save_metal_snapshots(data)
     signals = MetalsArbitrageStrategy().evaluate(data)
-    signal_map = {signal.asset: level_badge(signal.level) for signal in signals}
-
-    rows = []
-    for item in data:
-        asset = f"{item.metal_name} vs {item.benchmark_display_name}"
-        rows.append(
-            {
-                "品种": item.metal_symbol,
-                "名称": item.metal_name,
-                "分类": item.category,
-                "对比标的": item.benchmark_display_name,
-                "国内价格": round(item.dom_price, 2),
-                "国际人民币价": round(item.for_price_cny, 2),
-                "国际美元价": round(item.for_price_usd, 4),
-                "汇率": round(item.exchange_rate, 4),
-                "隐含汇率": round(item.implied_rate, 4),
-                "价差": round(item.spread, 2),
-                "价差百分比(%)": round(item.spread_pct, 4),
-                "国内时间": item.dom_time,
-                "国际时间": item.for_time,
-                "国际日期": item.for_date,
-                "人民币报价": "API" if item.used_api_cny_quote else "汇率换算",
-                "信号": signal_map.get(asset, ""),
-            }
-        )
-
-    signal_rows = []
-    for signal in signals:
-        signal_rows.append(
-            {
-                "级别": level_badge(signal.level),
-                "标的": signal.asset,
-                "策略": signal.strategy_name,
-                "详情": signal.message.replace("\n", " | "),
-            }
-        )
-
-    df = pd.DataFrame(rows).sort_values(
-        by=["价差百分比(%)", "品种"], ascending=[False, True]
-    )
-    return df, pd.DataFrame(signal_rows)
+    return build_metals_live_tables(data, signals)
 
 
 @st.cache_data(ttl=60)
@@ -277,6 +196,109 @@ def fetch_recent_metal_snapshot_history(limit: int = 200) -> pd.DataFrame:
     if not df.empty:
         df["fetched_at"] = pd.to_datetime(df["fetched_at"])
     return df
+
+
+@st.cache_data(ttl=30)
+def fetch_source_health_table() -> pd.DataFrame:
+    rows = db_manager.get_source_health_statuses()
+    df = pd.DataFrame(
+        rows,
+        columns=[
+            "source_name",
+            "last_success_at",
+            "last_failure_at",
+            "consecutive_failures",
+            "last_error",
+            "recent_successes",
+            "recent_total",
+            "success_rate",
+            "avg_duration_ms",
+            "p95_duration_ms",
+            "active_source",
+            "is_fallback",
+            "updated_at",
+        ],
+    )
+    if df.empty:
+        return df
+    df["降级中"] = df["is_fallback"].map({1: "是", 0: "否"})
+    return df[
+        [
+            "source_name",
+            "active_source",
+            "降级中",
+            "consecutive_failures",
+            "success_rate",
+            "avg_duration_ms",
+            "p95_duration_ms",
+            "last_success_at",
+            "last_failure_at",
+            "last_error",
+            "updated_at",
+        ]
+    ].rename(
+        columns={
+            "source_name": "数据源",
+            "active_source": "当前来源",
+            "consecutive_failures": "连续失败",
+            "success_rate": "最近成功率(%)",
+            "avg_duration_ms": "平均耗时(ms)",
+            "p95_duration_ms": "P95耗时(ms)",
+            "last_success_at": "最近成功",
+            "last_failure_at": "最近失败",
+            "last_error": "最近错误",
+            "updated_at": "更新时间",
+        }
+    )
+
+
+@st.cache_data(ttl=15)
+def fetch_job_run_status_table() -> pd.DataFrame:
+    rows = db_manager.get_job_run_statuses()
+    df = pd.DataFrame(
+        rows,
+        columns=[
+            "job_name",
+            "current_running",
+            "last_started_at",
+            "last_finished_at",
+            "last_duration_ms",
+            "last_status",
+            "last_error",
+            "total_skipped",
+            "consecutive_skipped",
+            "updated_at",
+        ],
+    )
+    if df.empty:
+        return df
+    df["运行中"] = df["current_running"].map({1: "是", 0: "否"})
+    return df[
+        [
+            "job_name",
+            "运行中",
+            "last_status",
+            "last_started_at",
+            "last_finished_at",
+            "last_duration_ms",
+            "total_skipped",
+            "consecutive_skipped",
+            "last_error",
+            "updated_at",
+        ]
+    ].rename(
+        columns={
+            "job_name": "任务",
+            "last_status": "最近状态",
+            "last_started_at": "最近开始",
+            "last_finished_at": "最近结束",
+            "last_duration_ms": "最近耗时(ms)",
+            "total_skipped": "累计跳过",
+            "consecutive_skipped": "连续跳过",
+            "last_error": "最近异常",
+            "updated_at": "更新时间",
+        }
+    )
 
 
 @st.cache_data(ttl=60)
@@ -620,6 +642,20 @@ elif view == "系统状态":
             width="stretch",
             hide_index=True,
         )
+
+    st.markdown("#### 数据源健康度")
+    source_health_df = fetch_source_health_table()
+    if source_health_df.empty:
+        st.info("暂无数据源健康度记录")
+    else:
+        st.dataframe(source_health_df, width="stretch", hide_index=True)
+
+    st.markdown("#### 任务运行状态")
+    job_status_df = fetch_job_run_status_table()
+    if job_status_df.empty:
+        st.info("暂无任务运行状态记录")
+    else:
+        st.dataframe(job_status_df, width="stretch", hide_index=True)
 
 elif view == "软件说明":
     st.markdown("#### 软件说明")

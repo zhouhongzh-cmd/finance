@@ -10,6 +10,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from models.market_data import FuturesMarginData
 from utils.db_manager import DBManager
 from utils.logger import logger
+from utils.source_health import source_health_context
 
 
 PRODUCT_SPECS: Dict[str, Dict[str, object]] = {
@@ -108,7 +109,9 @@ class FuturesMarginFetcher:
         notes: List[str] = []
         for url in spec["urls"]:
             try:
-                html = self._fetch_text(str(url))
+                source_key = "futures_margin_cffex_product_page"
+                with source_health_context(source_key):
+                    html = self._fetch_text(str(url))
                 ratio = self._extract_margin_ratio(html)
                 if ratio is not None:
                     logger.info(
@@ -189,12 +192,18 @@ class FuturesMarginFetcher:
 
     def _load_cicc_secondary_ratios(self, fetched_at: datetime) -> Dict[str, tuple[float, str]]:
         try:
-            list_html = self._fetch_text(CICC_MARGIN_LIST_URL)
+            with source_health_context(
+                "futures_margin_cicc_bulletin", active_source="fallback", is_fallback=True
+            ):
+                list_html = self._fetch_text(CICC_MARGIN_LIST_URL)
             detail_url = self._extract_latest_cicc_detail_url(list_html)
             if detail_url is None:
                 return {}
 
-            detail_html = self._fetch_text(detail_url)
+            with source_health_context(
+                "futures_margin_cicc_detail", active_source="fallback", is_fallback=True
+            ):
+                detail_html = self._fetch_text(detail_url)
             ratios = self._extract_cicc_margin_ratios(detail_html)
             for product_code, ratio in ratios.items():
                 logger.info(

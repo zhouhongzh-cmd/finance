@@ -19,7 +19,10 @@ class FuturesDiscountStrategy(BaseStrategy):
 
     def evaluate(self, data: List[FuturesData]) -> List[Signal]:
         signals = []
-        threshold = settings.FUTURES_DISCOUNT_RATE_THRESHOLD
+        annualized_threshold = settings.FUTURES_DISCOUNT_RATE_THRESHOLD
+        percent_threshold = settings.FUTURES_DISCOUNT_PERCENT_THRESHOLD
+        percent_enabled = settings.ENABLE_FUTURES_DISCOUNT_PERCENT_THRESHOLD
+        annualized_enabled = settings.ENABLE_FUTURES_DISCOUNT_RATE_THRESHOLD
 
         for item in data:
             # 使用合约自身的真实剩余交割天数年化，max(1) 防止除以零（交割当天）
@@ -32,14 +35,43 @@ class FuturesDiscountStrategy(BaseStrategy):
                 annualized=annualized_discount,
             )
 
-            if annualized_discount > threshold:
+            percent_triggered = percent_enabled and item.discount_rate >= percent_threshold
+            annualized_triggered = annualized_enabled and annualized_discount >= annualized_threshold
+            if percent_triggered or annualized_triggered:
+                percent_ratio = (
+                    item.discount_rate / percent_threshold
+                    if percent_triggered and percent_threshold > 0
+                    else 0.0
+                )
+                annualized_ratio = (
+                    annualized_discount / annualized_threshold
+                    if annualized_triggered and annualized_threshold > 0
+                    else 0.0
+                )
+                severity_ratio = max(percent_ratio, annualized_ratio)
+                trigger_labels = []
+                if percent_triggered:
+                    trigger_labels.append("贴水率")
+                if annualized_triggered:
+                    trigger_labels.append("年化贴水率")
+                if percent_enabled:
+                    percent_line = f"贴水率阈值：{percent_threshold:.2f}%"
+                else:
+                    percent_line = "贴水率阈值：未启用"
+                if annualized_enabled:
+                    annualized_line = f"年化贴水率阈值：{annualized_threshold:.2f}%"
+                else:
+                    annualized_line = "年化贴水率阈值：未启用"
                 msg = (
                     f"🎯 **期指深度贴水套利机会**\n"
                     f"标的：{item.symbol}\n"
                     f"期指价格：{item.price:.2f}\n"
                     f"现货价格：{item.spot_price:.2f}\n"
                     f"当前绝对贴水率：{item.discount_rate:.2f}%\n"
-                    f"🔥 **估算年化贴水率：{annualized_discount:.2f}%** (阈值：{threshold}%)"
+                    f"🔥 **估算年化贴水率：{annualized_discount:.2f}%**\n"
+                    f"触发条件：{' / '.join(trigger_labels)}\n"
+                    f"{percent_line}\n"
+                    f"{annualized_line}"
                 )
                 if item.margin_ratio > 0:
                     msg += (
@@ -51,9 +83,7 @@ class FuturesDiscountStrategy(BaseStrategy):
                 signal = Signal(
                     asset=item.symbol,
                     strategy_name=self.name,
-                    level="WARNING"
-                    if annualized_discount < (threshold * 1.5)
-                    else "CRITICAL",
+                    level="WARNING" if severity_ratio < 1.5 else "CRITICAL",
                     message=msg,
                 )
                 signals.append(signal)

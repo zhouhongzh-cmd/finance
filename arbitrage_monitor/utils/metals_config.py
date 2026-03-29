@@ -10,7 +10,7 @@ from config.metals import METALS_CONFIG, get_default_metals_thresholds
 
 
 _threshold_lock = threading.RLock()
-_threshold_cache: dict[str, dict[str, float]] | None = None
+_threshold_cache: dict[str, dict[str, float | bool]] | None = None
 
 
 def get_metals_thresholds_path() -> Path:
@@ -36,8 +36,8 @@ def _load_threshold_payload(path: Path) -> dict[str, Any] | None:
 
 
 def _diff_thresholds(
-    current: dict[str, dict[str, float]],
-    legacy: dict[str, dict[str, float]],
+    current: dict[str, dict[str, float | bool]],
+    legacy: dict[str, dict[str, float | bool]],
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for symbol, legacy_values in legacy.items():
@@ -47,6 +47,10 @@ def _diff_thresholds(
         if (
             float(current_values["upper"]) == float(legacy_values["upper"])
             and float(current_values["lower"]) == float(legacy_values["lower"])
+            and bool(current_values.get("upper_enabled", True))
+            == bool(legacy_values.get("upper_enabled", True))
+            and bool(current_values.get("lower_enabled", True))
+            == bool(legacy_values.get("lower_enabled", True))
         ):
             continue
         rows.append(
@@ -55,14 +59,18 @@ def _diff_thresholds(
                 "name": METALS_CONFIG[symbol]["name"],
                 "current_upper": float(current_values["upper"]),
                 "current_lower": float(current_values["lower"]),
+                "current_upper_enabled": bool(current_values.get("upper_enabled", True)),
+                "current_lower_enabled": bool(current_values.get("lower_enabled", True)),
                 "legacy_upper": float(legacy_values["upper"]),
                 "legacy_lower": float(legacy_values["lower"]),
+                "legacy_upper_enabled": bool(legacy_values.get("upper_enabled", True)),
+                "legacy_lower_enabled": bool(legacy_values.get("lower_enabled", True)),
             }
         )
     return rows
 
 
-def _normalize_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[str, float]]:
+def _normalize_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[str, float | bool]]:
     defaults = get_default_metals_thresholds()
     normalized = deepcopy(defaults)
 
@@ -74,12 +82,17 @@ def _normalize_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[str, flo
             continue
         upper = values.get("upper", normalized[symbol]["upper"])
         lower = values.get("lower", normalized[symbol]["lower"])
-        normalized[symbol] = {"upper": float(upper), "lower": float(lower)}
+        normalized[symbol] = {
+            "upper": float(upper),
+            "lower": float(lower),
+            "upper_enabled": bool(values.get("upper_enabled", normalized[symbol]["upper_enabled"])),
+            "lower_enabled": bool(values.get("lower_enabled", normalized[symbol]["lower_enabled"])),
+        }
 
     return normalized
 
 
-def _normalize_local_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[str, float]]:
+def _normalize_local_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[str, float | bool]]:
     defaults = get_default_metals_thresholds()
     normalized: dict[str, dict[str, float]] = {}
 
@@ -92,12 +105,18 @@ def _normalize_local_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[st
         normalized[symbol] = {
             "upper": float(values.get("upper", defaults[symbol]["upper"])),
             "lower": float(values.get("lower", defaults[symbol]["lower"])),
+            "upper_enabled": bool(
+                values.get("upper_enabled", defaults[symbol]["upper_enabled"])
+            ),
+            "lower_enabled": bool(
+                values.get("lower_enabled", defaults[symbol]["lower_enabled"])
+            ),
         }
 
     return normalized
 
 
-def load_metals_thresholds(force_reload: bool = False) -> dict[str, dict[str, float]]:
+def load_metals_thresholds(force_reload: bool = False) -> dict[str, dict[str, float | bool]]:
     global _threshold_cache
 
     with _threshold_lock:
@@ -139,13 +158,15 @@ def load_metals_thresholds(force_reload: bool = False) -> dict[str, dict[str, fl
                 effective[symbol] = {
                     "upper": float(values["upper"]),
                     "lower": float(values["lower"]),
+                    "upper_enabled": bool(values["upper_enabled"]),
+                    "lower_enabled": bool(values["lower_enabled"]),
                 }
 
         _threshold_cache = effective
         return deepcopy(_threshold_cache)
 
 
-def save_metals_thresholds(thresholds: dict[str, dict[str, float]]) -> Path:
+def save_metals_thresholds(thresholds: dict[str, dict[str, float | bool]]) -> Path:
     global _threshold_cache
 
     with _threshold_lock:
@@ -157,6 +178,8 @@ def save_metals_thresholds(thresholds: dict[str, dict[str, float]]) -> Path:
             if symbol not in shared_thresholds
             or float(shared_thresholds[symbol]["upper"]) != float(values["upper"])
             or float(shared_thresholds[symbol]["lower"]) != float(values["lower"])
+            or bool(shared_thresholds[symbol]["upper_enabled"]) != bool(values["upper_enabled"])
+            or bool(shared_thresholds[symbol]["lower_enabled"]) != bool(values["lower_enabled"])
         }
         path = get_local_metals_thresholds_path()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -226,11 +249,11 @@ def reset_metals_thresholds() -> Path:
     return get_metals_thresholds_path()
 
 
-def get_effective_metal_threshold(symbol: str) -> dict[str, float]:
+def get_effective_metal_threshold(symbol: str) -> dict[str, float | bool]:
     thresholds = load_metals_thresholds()
     if symbol in thresholds:
         return thresholds[symbol]
-    return {"upper": 2.0, "lower": -2.0}
+    return {"upper": 2.0, "lower": -2.0, "upper_enabled": True, "lower_enabled": True}
 
 
 def get_metals_config_rows() -> list[dict[str, Any]]:
@@ -245,6 +268,8 @@ def get_metals_config_rows() -> list[dict[str, Any]]:
                 "category": config["category"],
                 "upper": float(current["upper"]),
                 "lower": float(current["lower"]),
+                "upper_enabled": bool(current.get("upper_enabled", True)),
+                "lower_enabled": bool(current.get("lower_enabled", True)),
             }
         )
     return rows

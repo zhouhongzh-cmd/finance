@@ -5,6 +5,8 @@ L2: 调度与并发层 + L6: 运维与监控层
 
 import signal
 import sys
+import threading
+import time as time_module
 from datetime import datetime, time
 from typing import Dict, Optional
 
@@ -35,10 +37,13 @@ scheduler = BlockingScheduler(
 
 cooldown_cache: Dict[str, datetime] = {}
 db_manager = DBManager()
+job_locks: Dict[str, threading.Lock] = {}
 
 MODULE_RUNTIME_CONFIG = {
     "futures": {
         "enabled_field": "ENABLE_FUTURES_MONITOR",
+        "cruise_enabled_field": "ENABLE_FUTURES_CRUISE",
+        "watch_enabled_field": "ENABLE_FUTURES_WATCH",
         "cruise_field": "FUTURES_CRUISE_INTERVAL_MINUTES",
         "watch_field": "FUTURES_WATCH_INTERVAL_SECONDS",
         "job_ids": {
@@ -49,6 +54,8 @@ MODULE_RUNTIME_CONFIG = {
     },
     "convertible": {
         "enabled_field": "ENABLE_CONVERTIBLE_MONITOR",
+        "cruise_enabled_field": "ENABLE_CONVERTIBLE_CRUISE",
+        "watch_enabled_field": "ENABLE_CONVERTIBLE_WATCH",
         "cruise_field": "CONVERTIBLE_CRUISE_INTERVAL_MINUTES",
         "watch_field": "CONVERTIBLE_WATCH_INTERVAL_SECONDS",
         "job_ids": {
@@ -59,6 +66,8 @@ MODULE_RUNTIME_CONFIG = {
     },
     "sentiment": {
         "enabled_field": "ENABLE_SENTIMENT_MONITOR",
+        "cruise_enabled_field": "ENABLE_SENTIMENT_CRUISE",
+        "watch_enabled_field": None,
         "cruise_field": "SENTIMENT_CRUISE_INTERVAL_MINUTES",
         "watch_field": None,
         "job_ids": {
@@ -68,6 +77,8 @@ MODULE_RUNTIME_CONFIG = {
     },
     "metals": {
         "enabled_field": "ENABLE_METALS_MONITOR",
+        "cruise_enabled_field": "ENABLE_METALS_CRUISE",
+        "watch_enabled_field": "ENABLE_METALS_WATCH",
         "cruise_field": "METALS_CRUISE_INTERVAL_MINUTES",
         "watch_field": "METALS_WATCH_INTERVAL_SECONDS",
         "job_ids": {
@@ -83,6 +94,12 @@ _scheduler_runtime_state = {
         "cruise_interval": getattr(settings, cfg["cruise_field"]),
         "watch_interval": (
             getattr(settings, cfg["watch_field"]) if cfg["watch_field"] else None
+        ),
+        "cruise_enabled": getattr(settings, cfg["cruise_enabled_field"]),
+        "watch_enabled": (
+            getattr(settings, cfg["watch_enabled_field"])
+            if cfg["watch_enabled_field"]
+            else None
         ),
     }
     for name, cfg in MODULE_RUNTIME_CONFIG.items()
@@ -162,6 +179,13 @@ def is_trading_hours() -> bool:
     return is_module_watch_hours("FUTURES")
 
 
+def is_module_mode_enabled(prefix: str, mode: str) -> bool:
+    if mode not in {"cruise", "watch"}:
+        raise ValueError(f"unsupported mode: {mode}")
+    field = f"ENABLE_{prefix}_{mode.upper()}"
+    return bool(getattr(settings, field, False))
+
+
 def get_cooldown_key(signal) -> str:
     return f"{signal.strategy_name}:{signal.asset}"
 
@@ -210,7 +234,7 @@ def run_strategy_task(fetcher, strategy, strategy_name: str):
         data = fetcher.fetch_live()
         if not data:
             logger.warning("strategy_no_data", strategy=strategy_name)
-            return
+            return {"status": "NO_DATA", "signals_count": 0}
 
         persist_runtime_data(strategy_name, data)
         signals = strategy.evaluate(data)
@@ -239,16 +263,61 @@ def run_strategy_task(fetcher, strategy, strategy_name: str):
             strategy=strategy_name,
             signals_count=len(signals),
         )
+        return {"status": "SUCCESS", "signals_count": len(signals)}
     except Exception as exc:
         logger.error(
             "strategy_task_failed", strategy=strategy_name, error=str(exc), exc_info=True
         )
+        return {"status": "FAILED", "signals_count": 0, "error": str(exc)}
+
+
+def _get_job_lock(job_name: str) -> threading.Lock:
+    if job_name not in job_locks:
+        job_locks[job_name] = threading.Lock()
+    return job_locks[job_name]
+
+
+def execute_job(job_name: str, runner):
+    lock = _get_job_lock(job_name)
+    if not lock.acquire(blocking=False):
+        db_manager.mark_job_skipped(job_name, reason="OVERLAP")
+        logger.warning("job_skipped_overlap", job=job_name)
+        return None
+
+    started_at = datetime.now()
+    started_perf = time_module.perf_counter()
+    db_manager.mark_job_started(job_name, started_at.isoformat())
+
+    status = "SUCCESS"
+    error_summary = ""
+    try:
+        result = runner()
+        if isinstance(result, dict):
+            status = str(result.get("status", "SUCCESS"))
+            error_summary = str(result.get("error", "") or "")
+        return result
+    except Exception as exc:
+        status = "FAILED"
+        error_summary = str(exc)
+        logger.error("job_execution_failed", job=job_name, error=error_summary, exc_info=True)
+        return {"status": status, "error": error_summary}
+    finally:
+        duration_ms = (time_module.perf_counter() - started_perf) * 1000
+        db_manager.mark_job_finished(
+            job_name,
+            finished_at=datetime.now().isoformat(),
+            status=status,
+            duration_ms=duration_ms,
+            error_summary=error_summary,
+        )
+        lock.release()
 
 
 def _reschedule_runtime_jobs_if_needed():
     for module_name, config in MODULE_RUNTIME_CONFIG.items():
         cruise_interval = getattr(settings, config["cruise_field"])
         state = _scheduler_runtime_state[module_name]
+        cruise_enabled = getattr(settings, config["cruise_enabled_field"])
         if state["cruise_interval"] != cruise_interval:
             scheduler.reschedule_job(
                 config["job_ids"]["cruise"], trigger="interval", minutes=cruise_interval
@@ -259,11 +328,19 @@ def _reschedule_runtime_jobs_if_needed():
                 module=module_name,
                 cruise_interval=cruise_interval,
             )
+        if state["cruise_enabled"] != cruise_enabled:
+            state["cruise_enabled"] = cruise_enabled
+            logger.info(
+                "scheduler_cruise_mode_reloaded",
+                module=module_name,
+                cruise_enabled=cruise_enabled,
+            )
 
         watch_field = config["watch_field"]
         watch_job_id = config["job_ids"].get("watch")
         if watch_field and watch_job_id:
             watch_interval = getattr(settings, watch_field)
+            watch_enabled = getattr(settings, config["watch_enabled_field"])
             if state["watch_interval"] != watch_interval:
                 scheduler.reschedule_job(
                     watch_job_id, trigger="interval", seconds=watch_interval
@@ -274,12 +351,25 @@ def _reschedule_runtime_jobs_if_needed():
                     module=module_name,
                     watch_interval=watch_interval,
                 )
+            if state["watch_enabled"] != watch_enabled:
+                state["watch_enabled"] = watch_enabled
+                logger.info(
+                    "scheduler_watch_mode_reloaded",
+                    module=module_name,
+                    watch_enabled=watch_enabled,
+                )
 
 
 def sync_runtime_settings():
     previous = {
         module_name: {
             "enabled": getattr(settings, cfg["enabled_field"]),
+            "cruise_enabled": getattr(settings, cfg["cruise_enabled_field"]),
+            "watch_enabled": (
+                getattr(settings, cfg["watch_enabled_field"])
+                if cfg["watch_enabled_field"]
+                else None
+            ),
             "cruise_interval": getattr(settings, cfg["cruise_field"]),
             "watch_interval": (
                 getattr(settings, cfg["watch_field"]) if cfg["watch_field"] else None
@@ -296,6 +386,12 @@ def sync_runtime_settings():
     current = {
         module_name: {
             "enabled": getattr(settings, cfg["enabled_field"]),
+            "cruise_enabled": getattr(settings, cfg["cruise_enabled_field"]),
+            "watch_enabled": (
+                getattr(settings, cfg["watch_enabled_field"])
+                if cfg["watch_enabled_field"]
+                else None
+            ),
             "cruise_interval": getattr(settings, cfg["cruise_field"]),
             "watch_interval": (
                 getattr(settings, cfg["watch_field"]) if cfg["watch_field"] else None
@@ -315,8 +411,10 @@ def refresh_futures_margin_snapshot():
         logger.info("futures_margin_refresh_start")
         snapshots = futures_margin_fetcher.fetch_live()
         logger.info("futures_margin_refresh_completed", count=len(snapshots))
+        return {"status": "SUCCESS", "count": len(snapshots)}
     except Exception as exc:
         logger.error("futures_margin_refresh_failed", error=str(exc), exc_info=True)
+        return {"status": "FAILED", "error": str(exc)}
 
 
 def ensure_futures_margin_baseline():
@@ -331,90 +429,143 @@ def ensure_futures_margin_baseline():
 
 
 def run_futures_cruise_mode():
-    sync_runtime_settings()
-    if is_module_watch_hours("FUTURES"):
-        logger.debug("futures_cruise_skipped_trading_hours")
-        return
-    if settings.ENABLE_FUTURES_MONITOR:
-        run_strategy_task(
-            futures_fetcher, FuturesDiscountStrategy(), "Futures_Discount_Arbitrage"
-        )
-    else:
-        logger.info("strategy_disabled", strategy="Futures_Discount_Arbitrage")
+    def _runner():
+        sync_runtime_settings()
+        if not settings.ENABLE_FUTURES_MONITOR:
+            logger.info("strategy_disabled", strategy="Futures_Discount_Arbitrage")
+            return {"status": "DISABLED"}
+        if not settings.ENABLE_FUTURES_CRUISE:
+            return {"status": "DISABLED_MODE"}
+        if is_module_watch_hours("FUTURES") and settings.ENABLE_FUTURES_WATCH:
+            logger.debug("futures_cruise_skipped_watch_preferred")
+            return {"status": "SKIPPED_WINDOW"}
+        if settings.ENABLE_FUTURES_MONITOR:
+            return run_strategy_task(
+                futures_fetcher, FuturesDiscountStrategy(), "Futures_Discount_Arbitrage"
+            )
+        return {"status": "DISABLED"}
+
+    return execute_job("futures_cruise_mode", _runner)
 
 
 def run_convertible_cruise_mode():
-    sync_runtime_settings()
-    if is_module_watch_hours("CONVERTIBLE"):
-        logger.debug("convertible_cruise_skipped_trading_hours")
-        return
-    if settings.ENABLE_CONVERTIBLE_MONITOR:
-        run_strategy_task(
-            convertible_fetcher, ConvertibleStrategy(), "Convertible_Arbitrage"
-        )
-    else:
-        logger.info("strategy_disabled", strategy="Convertible_Arbitrage")
+    def _runner():
+        sync_runtime_settings()
+        if not settings.ENABLE_CONVERTIBLE_MONITOR:
+            logger.info("strategy_disabled", strategy="Convertible_Arbitrage")
+            return {"status": "DISABLED"}
+        if not settings.ENABLE_CONVERTIBLE_CRUISE:
+            return {"status": "DISABLED_MODE"}
+        if is_module_watch_hours("CONVERTIBLE") and settings.ENABLE_CONVERTIBLE_WATCH:
+            logger.debug("convertible_cruise_skipped_watch_preferred")
+            return {"status": "SKIPPED_WINDOW"}
+        if settings.ENABLE_CONVERTIBLE_MONITOR:
+            return run_strategy_task(
+                convertible_fetcher, ConvertibleStrategy(), "Convertible_Arbitrage"
+            )
+        return {"status": "DISABLED"}
+
+    return execute_job("convertible_cruise_mode", _runner)
 
 
 def run_sentiment_low_freq_mode():
-    sync_runtime_settings()
-    if not is_module_watch_hours("SENTIMENT"):
-        logger.debug("sentiment_low_freq_skipped_outside_window")
-        return
-    if settings.ENABLE_SENTIMENT_MONITOR:
-        run_strategy_task(
-            sentiment_fetcher, SentimentStrategy(), "Sentiment_Heat_and_Risk"
-        )
-    else:
-        logger.info("strategy_disabled", strategy="Sentiment_Heat_and_Risk")
+    def _runner():
+        sync_runtime_settings()
+        if not is_module_watch_hours("SENTIMENT"):
+            logger.debug("sentiment_low_freq_skipped_outside_window")
+            return {"status": "SKIPPED_WINDOW"}
+        if not settings.ENABLE_SENTIMENT_MONITOR:
+            logger.info("strategy_disabled", strategy="Sentiment_Heat_and_Risk")
+            return {"status": "DISABLED"}
+        if not settings.ENABLE_SENTIMENT_CRUISE:
+            return {"status": "DISABLED_MODE"}
+        if settings.ENABLE_SENTIMENT_MONITOR:
+            return run_strategy_task(
+                sentiment_fetcher, SentimentStrategy(), "Sentiment_Heat_and_Risk"
+            )
+        return {"status": "DISABLED"}
+
+    return execute_job("sentiment_low_freq_mode", _runner)
 
 
 def run_metals_cruise_mode():
-    sync_runtime_settings()
-    if is_module_watch_hours("METALS"):
-        logger.debug("metals_cruise_skipped_watch_hours")
-        return
-    if settings.ENABLE_METALS_MONITOR:
-        run_strategy_task(metals_fetcher, MetalsArbitrageStrategy(), "Metals_Arbitrage")
-    else:
-        logger.info("strategy_disabled", strategy="Metals_Arbitrage")
+    def _runner():
+        sync_runtime_settings()
+        if not settings.ENABLE_METALS_MONITOR:
+            logger.info("strategy_disabled", strategy="Metals_Arbitrage")
+            return {"status": "DISABLED"}
+        if not settings.ENABLE_METALS_CRUISE:
+            return {"status": "DISABLED_MODE"}
+        if is_module_watch_hours("METALS") and settings.ENABLE_METALS_WATCH:
+            logger.debug("metals_cruise_skipped_watch_preferred")
+            return {"status": "SKIPPED_WINDOW"}
+        if settings.ENABLE_METALS_MONITOR:
+            return run_strategy_task(
+                metals_fetcher, MetalsArbitrageStrategy(), "Metals_Arbitrage"
+            )
+        return {"status": "DISABLED"}
+
+    return execute_job("metals_cruise_mode", _runner)
 
 
 def run_futures_watch_mode():
-    sync_runtime_settings()
-    if not is_module_watch_hours("FUTURES"):
-        logger.debug("futures_watch_skipped_non_trading_hours")
-        return
-    if settings.ENABLE_FUTURES_MONITOR:
-        run_strategy_task(
-            futures_fetcher, FuturesDiscountStrategy(), "Futures_Discount_Arbitrage"
-        )
-    else:
-        logger.info("strategy_disabled", strategy="Futures_Discount_Arbitrage")
+    def _runner():
+        sync_runtime_settings()
+        if not is_module_watch_hours("FUTURES"):
+            logger.debug("futures_watch_skipped_non_trading_hours")
+            return {"status": "SKIPPED_WINDOW"}
+        if not settings.ENABLE_FUTURES_MONITOR:
+            logger.info("strategy_disabled", strategy="Futures_Discount_Arbitrage")
+            return {"status": "DISABLED"}
+        if not settings.ENABLE_FUTURES_WATCH:
+            return {"status": "DISABLED_MODE"}
+        if settings.ENABLE_FUTURES_MONITOR:
+            return run_strategy_task(
+                futures_fetcher, FuturesDiscountStrategy(), "Futures_Discount_Arbitrage"
+            )
+        return {"status": "DISABLED"}
+
+    return execute_job("futures_watch_mode", _runner)
 
 
 def run_convertible_watch_mode():
-    sync_runtime_settings()
-    if not is_module_watch_hours("CONVERTIBLE"):
-        logger.debug("convertible_watch_skipped_non_trading_hours")
-        return
-    if settings.ENABLE_CONVERTIBLE_MONITOR:
-        run_strategy_task(
-            convertible_fetcher, ConvertibleStrategy(), "Convertible_Arbitrage"
-        )
-    else:
-        logger.info("strategy_disabled", strategy="Convertible_Arbitrage")
+    def _runner():
+        sync_runtime_settings()
+        if not is_module_watch_hours("CONVERTIBLE"):
+            logger.debug("convertible_watch_skipped_non_trading_hours")
+            return {"status": "SKIPPED_WINDOW"}
+        if not settings.ENABLE_CONVERTIBLE_MONITOR:
+            logger.info("strategy_disabled", strategy="Convertible_Arbitrage")
+            return {"status": "DISABLED"}
+        if not settings.ENABLE_CONVERTIBLE_WATCH:
+            return {"status": "DISABLED_MODE"}
+        if settings.ENABLE_CONVERTIBLE_MONITOR:
+            return run_strategy_task(
+                convertible_fetcher, ConvertibleStrategy(), "Convertible_Arbitrage"
+            )
+        return {"status": "DISABLED"}
+
+    return execute_job("convertible_watch_mode", _runner)
 
 
 def run_metals_watch_mode():
-    sync_runtime_settings()
-    if not is_module_watch_hours("METALS"):
-        logger.debug("metals_watch_skipped_non_trading_hours")
-        return
-    if settings.ENABLE_METALS_MONITOR:
-        run_strategy_task(metals_fetcher, MetalsArbitrageStrategy(), "Metals_Arbitrage")
-    else:
-        logger.info("strategy_disabled", strategy="Metals_Arbitrage")
+    def _runner():
+        sync_runtime_settings()
+        if not is_module_watch_hours("METALS"):
+            logger.debug("metals_watch_skipped_non_trading_hours")
+            return {"status": "SKIPPED_WINDOW"}
+        if not settings.ENABLE_METALS_MONITOR:
+            logger.info("strategy_disabled", strategy="Metals_Arbitrage")
+            return {"status": "DISABLED"}
+        if not settings.ENABLE_METALS_WATCH:
+            return {"status": "DISABLED_MODE"}
+        if settings.ENABLE_METALS_MONITOR:
+            return run_strategy_task(
+                metals_fetcher, MetalsArbitrageStrategy(), "Metals_Arbitrage"
+            )
+        return {"status": "DISABLED"}
+
+    return execute_job("metals_watch_mode", _runner)
 
 
 def send_heartbeat():
@@ -452,8 +603,10 @@ def send_heartbeat():
         logger.info(
             "heartbeat_completed", today_alerts=today_alerts, total_alerts=total_alerts
         )
+        return {"status": "SUCCESS"}
     except Exception as exc:
         logger.error("heartbeat_failed", error=str(exc), exc_info=True)
+        return {"status": "FAILED", "error": str(exc)}
 
 
 def cleanup_old_runtime_data():
@@ -472,8 +625,26 @@ def cleanup_old_runtime_data():
             deleted_futures_snapshot_rows=futures_rows,
             deleted_metal_snapshot_rows=metals_rows,
         )
+        return {"status": "SUCCESS"}
     except Exception as exc:
         logger.error("retention_cleanup_failed", error=str(exc), exc_info=True)
+        return {"status": "FAILED", "error": str(exc)}
+
+
+def run_futures_margin_refresh_job():
+    return execute_job("futures_margin_refresh", refresh_futures_margin_snapshot)
+
+
+def run_daily_heartbeat_job():
+    return execute_job("daily_heartbeat", send_heartbeat)
+
+
+def run_retention_cleanup_job():
+    return execute_job("retention_cleanup", cleanup_old_runtime_data)
+
+
+def run_runtime_settings_sync_job():
+    return execute_job("runtime_settings_sync", lambda: (sync_runtime_settings() or {"status": "SUCCESS"}))
 
 
 def setup_signal_handlers():
@@ -551,7 +722,7 @@ def schedule_jobs():
         misfire_grace_time=30,
     )
     scheduler.add_job(
-        send_heartbeat,
+        run_daily_heartbeat_job,
         "cron",
         hour=9,
         minute=25,
@@ -559,7 +730,7 @@ def schedule_jobs():
         name="Daily Heartbeat Report",
     )
     scheduler.add_job(
-        refresh_futures_margin_snapshot,
+        run_futures_margin_refresh_job,
         "cron",
         hour=9,
         minute=0,
@@ -567,7 +738,7 @@ def schedule_jobs():
         name="Futures Margin Refresh Before Open",
     )
     scheduler.add_job(
-        refresh_futures_margin_snapshot,
+        run_futures_margin_refresh_job,
         "cron",
         hour=0,
         minute=0,
@@ -575,7 +746,7 @@ def schedule_jobs():
         name="Futures Margin Refresh At Midnight",
     )
     scheduler.add_job(
-        cleanup_old_runtime_data,
+        run_retention_cleanup_job,
         "cron",
         hour=0,
         minute=10,
@@ -583,7 +754,7 @@ def schedule_jobs():
         name="Retention Cleanup",
     )
     scheduler.add_job(
-        sync_runtime_settings,
+        run_runtime_settings_sync_job,
         "interval",
         seconds=15,
         id="runtime_settings_sync",

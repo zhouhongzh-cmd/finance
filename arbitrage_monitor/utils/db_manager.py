@@ -1,6 +1,7 @@
+import json
+import os
 import sqlite3
 import threading
-import os
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, Optional
@@ -99,6 +100,57 @@ class DBManager:
                     for_date TEXT DEFAULT '',
                     used_api_cny_quote INTEGER DEFAULT 0,
                     fetched_at TEXT NOT NULL
+                )
+                '''
+            )
+            conn.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS source_health_status (
+                    source_name TEXT PRIMARY KEY,
+                    last_success_at TEXT,
+                    last_failure_at TEXT,
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT DEFAULT '',
+                    recent_successes INTEGER NOT NULL DEFAULT 0,
+                    recent_total INTEGER NOT NULL DEFAULT 0,
+                    success_rate REAL NOT NULL DEFAULT 0,
+                    avg_duration_ms REAL NOT NULL DEFAULT 0,
+                    p95_duration_ms REAL NOT NULL DEFAULT 0,
+                    active_source TEXT DEFAULT '',
+                    is_fallback INTEGER NOT NULL DEFAULT 0,
+                    recent_outcomes_json TEXT NOT NULL DEFAULT '[]',
+                    recent_durations_json TEXT NOT NULL DEFAULT '[]',
+                    updated_at TEXT NOT NULL
+                )
+                '''
+            )
+            conn.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS config_change_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    changed_at TEXT NOT NULL,
+                    config_key TEXT NOT NULL,
+                    old_value TEXT,
+                    new_value TEXT,
+                    source TEXT NOT NULL,
+                    destination TEXT NOT NULL,
+                    immediate_effect INTEGER NOT NULL DEFAULT 1
+                )
+                '''
+            )
+            conn.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS job_run_status (
+                    job_name TEXT PRIMARY KEY,
+                    current_running INTEGER NOT NULL DEFAULT 0,
+                    last_started_at TEXT,
+                    last_finished_at TEXT,
+                    last_duration_ms REAL NOT NULL DEFAULT 0,
+                    last_status TEXT DEFAULT '',
+                    last_error TEXT DEFAULT '',
+                    total_skipped INTEGER NOT NULL DEFAULT 0,
+                    consecutive_skipped INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
                 )
                 '''
             )
@@ -391,5 +443,243 @@ class DBManager:
                 LIMIT ?
                 """,
                 (limit,),
+            )
+            return cursor.fetchall()
+
+    def save_source_health_status(
+        self,
+        source_name: str,
+        *,
+        success: bool,
+        duration_ms: float,
+        active_source: str,
+        is_fallback: bool,
+        error_summary: str = "",
+        window_size: int = 20,
+    ) -> None:
+        timestamp = datetime.now().isoformat()
+        with self._write_lock:
+            with self.get_connection() as conn:
+                row = conn.execute(
+                    """
+                    SELECT last_success_at, last_failure_at, consecutive_failures, recent_outcomes_json,
+                           recent_durations_json
+                    FROM source_health_status
+                    WHERE source_name = ?
+                    """,
+                    (source_name,),
+                ).fetchone()
+
+                last_success_at = row[0] if row else None
+                last_failure_at = row[1] if row else None
+                consecutive_failures = int(row[2] or 0) if row else 0
+                outcomes = json.loads(row[3]) if row and row[3] else []
+                durations = json.loads(row[4]) if row and row[4] else []
+
+                outcomes.append(1 if success else 0)
+                durations.append(round(float(duration_ms), 2))
+                outcomes = outcomes[-window_size:]
+                durations = durations[-window_size:]
+
+                if success:
+                    last_success_at = timestamp
+                    consecutive_failures = 0
+                    error_summary = ""
+                else:
+                    last_failure_at = timestamp
+                    consecutive_failures += 1
+
+                recent_total = len(outcomes)
+                recent_successes = int(sum(outcomes))
+                success_rate = round((recent_successes / recent_total) * 100, 2) if recent_total else 0.0
+                avg_duration_ms = round(sum(durations) / len(durations), 2) if durations else 0.0
+                sorted_durations = sorted(durations)
+                if sorted_durations:
+                    idx = max(0, int(len(sorted_durations) * 0.95) - 1)
+                    p95_duration_ms = round(sorted_durations[idx], 2)
+                else:
+                    p95_duration_ms = 0.0
+
+                conn.execute(
+                    """
+                    INSERT INTO source_health_status (
+                        source_name, last_success_at, last_failure_at, consecutive_failures,
+                        last_error, recent_successes, recent_total, success_rate, avg_duration_ms,
+                        p95_duration_ms, active_source, is_fallback, recent_outcomes_json,
+                        recent_durations_json, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(source_name) DO UPDATE SET
+                        last_success_at = excluded.last_success_at,
+                        last_failure_at = excluded.last_failure_at,
+                        consecutive_failures = excluded.consecutive_failures,
+                        last_error = excluded.last_error,
+                        recent_successes = excluded.recent_successes,
+                        recent_total = excluded.recent_total,
+                        success_rate = excluded.success_rate,
+                        avg_duration_ms = excluded.avg_duration_ms,
+                        p95_duration_ms = excluded.p95_duration_ms,
+                        active_source = excluded.active_source,
+                        is_fallback = excluded.is_fallback,
+                        recent_outcomes_json = excluded.recent_outcomes_json,
+                        recent_durations_json = excluded.recent_durations_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        source_name,
+                        last_success_at,
+                        last_failure_at,
+                        consecutive_failures,
+                        error_summary[:500],
+                        recent_successes,
+                        recent_total,
+                        success_rate,
+                        avg_duration_ms,
+                        p95_duration_ms,
+                        active_source,
+                        1 if is_fallback else 0,
+                        json.dumps(outcomes, ensure_ascii=False),
+                        json.dumps(durations, ensure_ascii=False),
+                        timestamp,
+                    ),
+                )
+                conn.commit()
+
+    def get_source_health_statuses(self):
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT source_name, last_success_at, last_failure_at, consecutive_failures, last_error,
+                       recent_successes, recent_total, success_rate, avg_duration_ms, p95_duration_ms,
+                       active_source, is_fallback, updated_at
+                FROM source_health_status
+                ORDER BY source_name
+                """
+            )
+            return cursor.fetchall()
+
+    def save_config_changes(self, changes: Iterable[dict]) -> None:
+        rows = [
+            (
+                change["changed_at"],
+                change["config_key"],
+                change.get("old_value"),
+                change.get("new_value"),
+                change["source"],
+                change["destination"],
+                1 if change.get("immediate_effect", True) else 0,
+            )
+            for change in changes
+        ]
+        if not rows:
+            return
+
+        with self._write_lock:
+            with self.get_connection() as conn:
+                conn.executemany(
+                    """
+                    INSERT INTO config_change_history
+                    (changed_at, config_key, old_value, new_value, source, destination, immediate_effect)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+                conn.commit()
+
+    def get_recent_config_changes(self, limit: int = 50):
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT changed_at, config_key, old_value, new_value, source, destination, immediate_effect
+                FROM config_change_history
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            return cursor.fetchall()
+
+    def mark_job_started(self, job_name: str, started_at: str) -> None:
+        with self._write_lock:
+            with self.get_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO job_run_status
+                    (job_name, current_running, last_started_at, updated_at)
+                    VALUES (?, 1, ?, ?)
+                    ON CONFLICT(job_name) DO UPDATE SET
+                        current_running = 1,
+                        last_started_at = excluded.last_started_at,
+                        updated_at = excluded.updated_at
+                    """,
+                    (job_name, started_at, started_at),
+                )
+                conn.commit()
+
+    def mark_job_finished(
+        self,
+        job_name: str,
+        *,
+        finished_at: str,
+        status: str,
+        duration_ms: float,
+        error_summary: str = "",
+    ) -> None:
+        with self._write_lock:
+            with self.get_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO job_run_status
+                    (job_name, current_running, last_finished_at, last_duration_ms, last_status,
+                     last_error, total_skipped, consecutive_skipped, updated_at)
+                    VALUES (?, 0, ?, ?, ?, ?, 0, 0, ?)
+                    ON CONFLICT(job_name) DO UPDATE SET
+                        current_running = 0,
+                        last_finished_at = excluded.last_finished_at,
+                        last_duration_ms = excluded.last_duration_ms,
+                        last_status = excluded.last_status,
+                        last_error = excluded.last_error,
+                        consecutive_skipped = 0,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        job_name,
+                        finished_at,
+                        round(float(duration_ms), 2),
+                        status,
+                        error_summary[:500],
+                        finished_at,
+                    ),
+                )
+                conn.commit()
+
+    def mark_job_skipped(self, job_name: str, reason: str = "OVERLAP") -> None:
+        timestamp = datetime.now().isoformat()
+        with self._write_lock:
+            with self.get_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO job_run_status
+                    (job_name, current_running, last_status, total_skipped, consecutive_skipped, updated_at)
+                    VALUES (?, 1, ?, 1, 1, ?)
+                    ON CONFLICT(job_name) DO UPDATE SET
+                        last_status = excluded.last_status,
+                        total_skipped = job_run_status.total_skipped + 1,
+                        consecutive_skipped = job_run_status.consecutive_skipped + 1,
+                        updated_at = excluded.updated_at
+                    """,
+                    (job_name, f"SKIPPED_{reason}", timestamp),
+                )
+                conn.commit()
+
+    def get_job_run_statuses(self):
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT job_name, current_running, last_started_at, last_finished_at, last_duration_ms,
+                       last_status, last_error, total_skipped, consecutive_skipped, updated_at
+                FROM job_run_status
+                ORDER BY job_name
+                """
             )
             return cursor.fetchall()

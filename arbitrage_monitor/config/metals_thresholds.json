@@ -1,42 +1,62 @@
 {
   "AU0": {
     "upper": 1.0,
-    "lower": -1.0
+    "lower": -1.0,
+    "upper_enabled": true,
+    "lower_enabled": true
   },
   "AG0": {
-    "upper": 2.0,
-    "lower": -2.0
+    "upper": 20.0,
+    "lower": -20.0,
+    "upper_enabled": true,
+    "lower_enabled": true
   },
   "PT0": {
     "upper": 2.0,
-    "lower": -2.0
+    "lower": -2.0,
+    "upper_enabled": true,
+    "lower_enabled": true
   },
   "PD0": {
     "upper": 2.0,
-    "lower": -2.0
+    "lower": -2.0,
+    "upper_enabled": true,
+    "lower_enabled": true
   },
   "CU0": {
     "upper": 1.5,
-    "lower": -1.5
+    "lower": -1.5,
+    "upper_enabled": true,
+    "lower_enabled": true
   },
   "AL0": {
     "upper": 1.5,
-    "lower": -1.5
+    "lower": -1.5,
+    "upper_enabled": true,
+    "lower_enabled": true
   },
   "ZN0": {
     "upper": 1.5,
-    "lower": -1.5
+    "lower": -1.5,
+    "upper_enabled": true,
+    "lower_enabled": true
   },
   "PB0": {
     "upper": 1.5,
-    "lower": -1.5
+    "lower": -1.5,
+    "upper_enabled": true,
+    "lower_enabled": true
   },
   "NI0": {
     "upper": 2.0,
-    "lower": -2.0
+    "lower": -2.0,
+    "upper_enabled": true,
+    "lower_enabled": true
   },
   "SN0": {
     "upper": 2.0,
-    "lower": -2.0
+    "lower": -2.0,
+    "upper_enabled": true,
+    "lower_enabled": true
   }
 }

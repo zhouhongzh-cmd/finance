@@ -9,6 +9,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from models.market_data import CBData
 from config.settings import settings
 from utils.logger import logger
+from utils.source_health import source_health_context
 
 
 class ConvertibleFetcher:
@@ -23,7 +24,8 @@ class ConvertibleFetcher:
     def fetch_live(self) -> List[CBData]:
         """从 AKShare 获取实时可转债行情 (集思录数据)。"""
         cookie = settings.JSL_COOKIE if settings.JSL_COOKIE else ""
-        df = ak.bond_cb_jsl(cookie=cookie)
+        with source_health_context("convertible_jsl"):
+            df = ak.bond_cb_jsl(cookie=cookie)
 
         # 无论是否配置 Cookie，只要结果明显截断就触发降级
         # （集思录正常应返回数百条可转债数据，≤30 条说明被限流或 Cookie 失效）
@@ -71,7 +73,10 @@ class ConvertibleFetcher:
             return self._fetch_live_fallback_legacy()
 
     def _fetch_live_fallback_eastmoney(self) -> List[CBData]:
-        rows = self._fetch_eastmoney_rows()
+        with source_health_context(
+            "convertible_eastmoney", active_source="fallback", is_fallback=True
+        ):
+            rows = self._fetch_eastmoney_rows()
         results = []
         for row in rows:
             item = self._build_cbdata_from_eastmoney_row(row)
@@ -82,7 +87,10 @@ class ConvertibleFetcher:
 
     def _fetch_live_fallback_legacy(self) -> List[CBData]:
         """最后兜底：akshare 的东方财富转债列表接口。"""
-        df = ak.bond_zh_cov()
+        with source_health_context(
+            "convertible_legacy_cov", active_source="fallback", is_fallback=True
+        ):
+            df = ak.bond_zh_cov()
         results = []
         for _, row in df.iterrows():
             symbol = f"{row.get('债券代码', 'N/A')}({row.get('债券简称', 'N/A')})"

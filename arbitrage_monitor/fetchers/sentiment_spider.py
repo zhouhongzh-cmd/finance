@@ -7,6 +7,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from models.market_data import SentimentData  # 已迁移至 models 层，统一架构
 from config.settings import settings
 from utils.logger import logger
+from utils.source_health import source_health_context
 
 
 class SentimentFetcher:
@@ -33,10 +34,10 @@ class SentimentFetcher:
             "pageNo": 1,
             "pageSize": 30,
         }
-        resp = self.client.post(url, json=payload, timeout=10)
-        resp.raise_for_status()
-
-        data = resp.json()
+        with source_health_context("sentiment_eastmoney"):
+            resp = self.client.post(url, json=payload, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
         items = data.get("data", [])
 
         if not items:

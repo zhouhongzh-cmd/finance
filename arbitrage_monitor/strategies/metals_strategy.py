@@ -20,13 +20,22 @@ class MetalsArbitrageStrategy(BaseStrategy):
             threshold = get_effective_metal_threshold(item.metal_symbol)
             upper = float(threshold["upper"])
             lower = float(threshold["lower"])
+            upper_enabled = bool(threshold.get("upper_enabled", True))
+            lower_enabled = bool(threshold.get("lower_enabled", True))
             spread_pct = item.spread_pct
 
-            triggered = spread_pct >= upper or spread_pct <= lower
+            triggered = (upper_enabled and spread_pct >= upper) or (
+                lower_enabled and spread_pct <= lower
+            )
             if not triggered:
                 continue
 
-            severity_base = max(abs(upper), abs(lower))
+            active_bounds = []
+            if upper_enabled:
+                active_bounds.append(abs(upper))
+            if lower_enabled:
+                active_bounds.append(abs(lower))
+            severity_base = max(active_bounds) if active_bounds else 0.0
             level = (
                 "CRITICAL"
                 if severity_base > 0 and abs(spread_pct) >= (severity_base * 1.5)
@@ -43,7 +52,8 @@ class MetalsArbitrageStrategy(BaseStrategy):
                 f"价差：{item.spread:.2f}\n"
                 f"价差百分比：{item.spread_pct:.2f}%\n"
                 f"隐含汇率：{item.implied_rate:.4f}\n"
-                f"阈值区间：[{lower:.2f}%, {upper:.2f}%]"
+                f"阈值区间：[{lower:.2f}%, {upper:.2f}%]\n"
+                f"下阈值：{'启用' if lower_enabled else '关闭'} / 上阈值：{'启用' if upper_enabled else '关闭'}"
             )
             signals.append(
                 Signal(

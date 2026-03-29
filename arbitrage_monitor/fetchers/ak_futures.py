@@ -10,6 +10,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from models.market_data import FuturesData
 from fetchers.futures_margin import futures_margin_fetcher
 from utils.logger import logger
+from utils.source_health import source_health_context
 
 
 def get_third_friday(year: int, month: int) -> date:
@@ -96,7 +97,8 @@ class FuturesFetcher:
     def _fetch_spot_index_prices(self) -> dict[str, float]:
         """优先使用 AKShare，失败时直连新浪指数接口。"""
         try:
-            spot_df = ak.stock_zh_index_spot_em()
+            with source_health_context("futures_spot_index_eastmoney"):
+                spot_df = ak.stock_zh_index_spot_em()
             return {
                 str(code): float(price)
                 for code, price in spot_df[["代码", "最新价"]].itertuples(index=False)
@@ -120,10 +122,13 @@ class FuturesFetcher:
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36"
             ),
         }
-        with httpx.Client(headers=headers, timeout=10.0, trust_env=False) as client:
-            response = client.get(url)
-            response.raise_for_status()
-            return self._parse_sina_index_response(response.text)
+        with source_health_context(
+            "futures_spot_index_sina", active_source="fallback", is_fallback=True
+        ):
+            with httpx.Client(headers=headers, timeout=10.0, trust_env=False) as client:
+                response = client.get(url)
+                response.raise_for_status()
+                return self._parse_sina_index_response(response.text)
 
     def _parse_sina_index_response(self, text: str) -> dict[str, float]:
         prices: dict[str, float] = {}
@@ -163,7 +168,8 @@ class FuturesFetcher:
 
         for contract_sym, spot_sym, days_to_maturity in contracts:
             try:
-                future_df = ak.futures_zh_spot(symbol=contract_sym, market="FF", adjust="0")
+                with source_health_context("futures_quote_ff_spot"):
+                    future_df = ak.futures_zh_spot(symbol=contract_sym, market="FF", adjust="0")
                 if future_df.empty:
                     logger.warning("futures_empty_response", symbol=contract_sym)
                     continue

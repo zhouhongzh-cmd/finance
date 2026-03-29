@@ -15,7 +15,7 @@ class SentimentStrategy(BaseStrategy):
         pulse_threshold = settings.SENTIMENT_PULSE_THRESHOLD
         for item in data:
             # 逻辑 1: 雪球热度异常飙升
-            if item.hot_score > hot_score_threshold:
+            if settings.ENABLE_SENTIMENT_HOT_SCORE_THRESHOLD and item.hot_score > hot_score_threshold:
                 signals.append(Signal(
                     asset=f"{item.name}({item.symbol})",
                     strategy_name=self.name,
@@ -25,7 +25,7 @@ class SentimentStrategy(BaseStrategy):
                 ))
                 
             # 逻辑 2: 负面舆情聚集 (排雷)
-            if item.sentiment_pulse < pulse_threshold:
+            if settings.ENABLE_SENTIMENT_PULSE_THRESHOLD and item.sentiment_pulse < pulse_threshold:
                 signals.append(Signal(
                     asset=f"{item.name}({item.symbol})",
                     strategy_name=self.name,

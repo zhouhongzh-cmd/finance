@@ -14,6 +14,7 @@ from config.metals import DEFAULT_EXCHANGE_RATE, METALS_CONFIG
 from config.settings import settings
 from models.market_data import MetalArbitrageData
 from utils.logger import logger
+from utils.source_health import source_health_context
 
 
 class MetalsFetcher:
@@ -21,7 +22,8 @@ class MetalsFetcher:
 
     def get_exchange_rate(self) -> float:
         try:
-            df = ak.fx_spot_quote()
+            with source_health_context("metals_fx_spot_quote"):
+                df = ak.fx_spot_quote()
             usd_cny = df[df["货币对"] == "USD/CNY"]["买报价"].values[0]
             rate = float(usd_cny)
             if not math.isnan(rate) and rate > 0:
@@ -33,9 +35,12 @@ class MetalsFetcher:
         try:
             end_date = date.today().strftime("%Y%m%d")
             start_date = (date.today() - timedelta(days=7)).strftime("%Y%m%d")
-            df_boc = ak.currency_boc_sina(
-                symbol="美元", start_date=start_date, end_date=end_date
-            )
+            with source_health_context(
+                "metals_fx_boc", active_source="fallback", is_fallback=True
+            ):
+                df_boc = ak.currency_boc_sina(
+                    symbol="美元", start_date=start_date, end_date=end_date
+                )
             if df_boc is not None and not df_boc.empty:
                 last_row = df_boc.iloc[-1]
                 for col_idx in [1, 2, 3, 5]:
@@ -49,7 +54,10 @@ class MetalsFetcher:
         try:
             from forex_python.converter import CurrencyRates
 
-            rate = float(CurrencyRates().get_rate("USD", "CNY"))
+            with source_health_context(
+                "metals_fx_forex_python", active_source="fallback", is_fallback=True
+            ):
+                rate = float(CurrencyRates().get_rate("USD", "CNY"))
             if rate > 0:
                 return rate
             raise ValueError(f"invalid_forex_python_rate={rate}")
@@ -60,7 +68,8 @@ class MetalsFetcher:
         return DEFAULT_EXCHANGE_RATE
 
     def fetch_foreign_commodity(self, symbol: str) -> dict[str, Any]:
-        df = ak.futures_foreign_commodity_realtime(symbol=symbol)
+        with source_health_context("metals_foreign_realtime"):
+            df = ak.futures_foreign_commodity_realtime(symbol=symbol)
         if df is None or df.empty:
             raise ValueError(f"empty_foreign_response:{symbol}")
 
@@ -81,7 +90,8 @@ class MetalsFetcher:
         }
 
     def fetch_domestic_minute(self, symbol: str) -> dict[str, Any]:
-        df = ak.futures_zh_minute_sina(symbol=symbol, period="1")
+        with source_health_context("metals_domestic_minute"):
+            df = ak.futures_zh_minute_sina(symbol=symbol, period="1")
         if df is None or df.empty:
             raise ValueError(f"empty_domestic_minute_response:{symbol}")
 
@@ -94,7 +104,10 @@ class MetalsFetcher:
         }
 
     def fetch_domestic_spot(self, symbol: str) -> dict[str, Any]:
-        df = ak.futures_zh_spot(symbol=symbol, market="CF", adjust="0")
+        with source_health_context(
+            "metals_domestic_spot", active_source="fallback", is_fallback=True
+        ):
+            df = ak.futures_zh_spot(symbol=symbol, market="CF", adjust="0")
         if df is None or df.empty:
             raise ValueError(f"empty_domestic_spot_response:{symbol}")
 
