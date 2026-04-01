@@ -2,8 +2,8 @@ from typing import List
 from models.signals import Signal
 from models.market_data import FuturesData
 from strategies.base import BaseStrategy
-from config.settings import settings
 from utils.logger import logger
+from utils.futures_config import get_effective_futures_threshold
 
 
 class FuturesDiscountStrategy(BaseStrategy):
@@ -19,12 +19,12 @@ class FuturesDiscountStrategy(BaseStrategy):
 
     def evaluate(self, data: List[FuturesData]) -> List[Signal]:
         signals = []
-        annualized_threshold = settings.FUTURES_DISCOUNT_RATE_THRESHOLD
-        percent_threshold = settings.FUTURES_DISCOUNT_PERCENT_THRESHOLD
-        percent_enabled = settings.ENABLE_FUTURES_DISCOUNT_PERCENT_THRESHOLD
-        annualized_enabled = settings.ENABLE_FUTURES_DISCOUNT_RATE_THRESHOLD
 
         for item in data:
+            threshold = get_effective_futures_threshold(item.product_code or item.symbol)
+            percent_threshold = float(threshold["discount_percent_threshold"])
+            annualized_threshold = float(threshold["annualized_discount_threshold"])
+            thresholds_enabled = bool(threshold["enabled"])
             # 使用合约自身的真实剩余交割天数年化，max(1) 防止除以零（交割当天）
             annualized_discount = item.discount_rate * (365 / max(item.days_to_maturity, 1))
 
@@ -35,33 +35,20 @@ class FuturesDiscountStrategy(BaseStrategy):
                 annualized=annualized_discount,
             )
 
-            percent_triggered = percent_enabled and item.discount_rate >= percent_threshold
-            annualized_triggered = annualized_enabled and annualized_discount >= annualized_threshold
-            if percent_triggered or annualized_triggered:
+            percent_triggered = item.discount_rate >= percent_threshold
+            annualized_triggered = annualized_discount >= annualized_threshold
+            if thresholds_enabled and percent_triggered and annualized_triggered:
                 percent_ratio = (
                     item.discount_rate / percent_threshold
-                    if percent_triggered and percent_threshold > 0
+                    if percent_threshold > 0
                     else 0.0
                 )
                 annualized_ratio = (
                     annualized_discount / annualized_threshold
-                    if annualized_triggered and annualized_threshold > 0
+                    if annualized_threshold > 0
                     else 0.0
                 )
                 severity_ratio = max(percent_ratio, annualized_ratio)
-                trigger_labels = []
-                if percent_triggered:
-                    trigger_labels.append("贴水率")
-                if annualized_triggered:
-                    trigger_labels.append("年化贴水率")
-                if percent_enabled:
-                    percent_line = f"贴水率阈值：{percent_threshold:.2f}%"
-                else:
-                    percent_line = "贴水率阈值：未启用"
-                if annualized_enabled:
-                    annualized_line = f"年化贴水率阈值：{annualized_threshold:.2f}%"
-                else:
-                    annualized_line = "年化贴水率阈值：未启用"
                 msg = (
                     f"🎯 **期指深度贴水套利机会**\n"
                     f"标的：{item.symbol}\n"
@@ -69,9 +56,9 @@ class FuturesDiscountStrategy(BaseStrategy):
                     f"现货价格：{item.spot_price:.2f}\n"
                     f"当前绝对贴水率：{item.discount_rate:.2f}%\n"
                     f"🔥 **估算年化贴水率：{annualized_discount:.2f}%**\n"
-                    f"触发条件：{' / '.join(trigger_labels)}\n"
-                    f"{percent_line}\n"
-                    f"{annualized_line}"
+                    f"触发条件：贴水率和年化贴水率已同时满足阈值\n"
+                    f"贴水率阈值：{percent_threshold:.2f}%\n"
+                    f"年化贴水率阈值：{annualized_threshold:.2f}%"
                 )
                 if item.margin_ratio > 0:
                     msg += (

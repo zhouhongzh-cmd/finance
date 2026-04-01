@@ -286,9 +286,11 @@
 
 #### 触发条件
 
-- 绝对贴水率 `>= FUTURES_DISCOUNT_PERCENT_THRESHOLD` 时触发报警
-- 或年化贴水率 `>= FUTURES_DISCOUNT_RATE_THRESHOLD` 时触发报警
-- 任一条件满足即触发一次信号，不重复生成同一轮双信号
+- 期指阈值按 `IH / IF / IC / IM` 分品种独立配置
+- 每个品种包含 `enabled`、`discount_percent_threshold`、`annualized_discount_threshold`
+- 绝对贴水率 `>=` 该品种的 `discount_percent_threshold`
+- 且年化贴水率 `>=` 该品种的 `annualized_discount_threshold`
+- 两个条件必须同时满足才触发一次信号
 - 触发强度大于对应阈值 `1.5x` 时升为 `CRITICAL`
 
 ### 8.3 可转债策略
@@ -317,11 +319,14 @@
 
 - `price > 0`
 - `premium_rate` 不为空且可计算
+- `is_listed = true`
+- `is_delisted = false`
 
 补充规则：
 
 - 若双低策略依赖 `ytm`，则 `ytm` 必须存在且可信
 - 任一策略所需核心字段缺失时，该记录本轮不得参与对应策略计算
+- 上市状态未知的转债不得进入本轮策略计算
 
 ### 8.4 舆情策略
 
@@ -335,6 +340,7 @@
 - 输入数据结构稳定
 - 触发阈值明确界定
 - fixture 能精确覆盖上述阈值的触发与未触发状态
+- 通知和看板展示应优先使用 `名称(代码)`，只有名称缺失时才允许退回纯代码
 
 运行特性补充约束：
 
@@ -529,6 +535,7 @@
 - 同一 `strategy_name + asset` 默认 `30` 分钟不重复推送
 - 冷却期以内存字典作为运行时缓存
 - 重启后必须从数据库恢复
+- `alert_history` 只保留同一 `asset` 的最新一条记录，不再按策略拆分保留
 
 说明：
 
@@ -553,10 +560,11 @@
 
 系统由于运行在低配环境（`1核 1G`）且高频调度（`30秒`盯盘），必须防范数据库无限膨胀引起的 I/O 阻塞：
 
-- 当前版本已实现基于 `DATA_RETENTION_DAYS` 的日度清理，默认保留最近 `30` 天的 `alert_history` 与 `futures_margin_snapshot`
+- 当前版本已实现基于 `DATA_RETENTION_DAYS` 的日度清理，默认保留最近 `14` 天的 `alert_history`、`futures_margin_snapshot`、`futures_live_snapshot` 与 `metal_arbitrage_snapshot`
 - 调度器应在每日 `00:10` 运行保留期清理 Job，避免与 `00:00` 的保证金刷新直接重叠
 - 后续若新增 `futures_snapshot`、`cb_snapshot`、`source_health_snapshot` 等快照表，也必须纳入同一套保留期治理，而不是无限追加
 - 长期演进仍建议补充数据量阀值告警与更细粒度的清理统计
+- 高频快照表应执行“分钟级去重 + 关键字段无变化跳过 + 保底定时写入”的轻量瘦身策略，避免盯盘模式下全量重复落库
 
 ---
 
@@ -688,6 +696,8 @@
 
 - Webhook、Cookie 等敏感配置通过 `.env` 管理
 - 监控频率、模块开关、策略阈值和金属阈值通过仓库内共享配置文件管理
+- 参数设置页按模块折叠分组展示；同一模块的开关、时钟和阈值必须收口到同一面板
+- 期指分品种阈值使用 `config/futures_thresholds.json` 与 `config/futures_thresholds.local.json`
 - 敏感文件不得提交到版本库
 
 ---

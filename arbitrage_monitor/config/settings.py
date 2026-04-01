@@ -112,7 +112,7 @@ class Settings(BaseSettings):
 
     # 冷却期
     COOLDOWN_MINUTES: int = 30
-    DATA_RETENTION_DAYS: int = 30
+    DATA_RETENTION_DAYS: int = 14
 
     # 通知
     FEISHU_WEBHOOK_URL: str = ""

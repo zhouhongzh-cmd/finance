@@ -65,3 +65,17 @@ def flatten_threshold_values(rows: list[dict[str, Any]]) -> dict[str, Any]:
             row.get("lower_enabled", True)
         )
     return payload
+
+
+def flatten_futures_threshold_values(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for row in rows:
+        product = row["product_code"]
+        payload[f"FUTURES_THRESHOLD.{product}.enabled"] = bool(row["enabled"])
+        payload[f"FUTURES_THRESHOLD.{product}.discount_percent_threshold"] = float(
+            row["discount_percent_threshold"]
+        )
+        payload[f"FUTURES_THRESHOLD.{product}.annualized_discount_threshold"] = float(
+            row["annualized_discount_threshold"]
+        )
+    return payload

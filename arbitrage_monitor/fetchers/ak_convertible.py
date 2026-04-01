@@ -3,7 +3,7 @@ import os
 import re
 import akshare as ak
 import httpx
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 from tenacity import retry, stop_after_attempt, wait_exponential
 from models.market_data import CBData
@@ -26,6 +26,7 @@ class ConvertibleFetcher:
         cookie = settings.JSL_COOKIE if settings.JSL_COOKIE else ""
         with source_health_context("convertible_jsl"):
             df = ak.bond_cb_jsl(cookie=cookie)
+        status_map = self._fetch_convertible_status_map()
 
         # 无论是否配置 Cookie，只要结果明显截断就触发降级
         # （集思录正常应返回数百条可转债数据，≤30 条说明被限流或 Cookie 失效）
@@ -39,7 +40,12 @@ class ConvertibleFetcher:
 
         results = []
         for _, row in df.iterrows():
-            symbol = f"{row.get('代码', 'N/A')}({row.get('转债名称', 'N/A')})"
+            code = str(row.get("代码", "") or "").strip()
+            name = str(row.get("转债名称", "") or "").strip()
+            status = status_map.get(code)
+            if not self._is_active_status(status):
+                continue
+            symbol = f"{code}({name or 'N/A'})"
             try:
                 price = float(row.get("现价", 0) or 0)
                 premium_rate = float(row.get("转股溢价率", 0) or 0)
@@ -56,6 +62,13 @@ class ConvertibleFetcher:
                     double_low=double_low,
                     price=price,
                     ytm=ytm,
+                    bond_code=code,
+                    bond_name=name,
+                    listing_status=str(status["listing_status"]),
+                    is_listed=bool(status["is_listed"]),
+                    is_delisted=bool(status["is_delisted"]),
+                    listing_date=str(status.get("listing_date") or ""),
+                    delist_date=str(status.get("delist_date") or ""),
                 )
             )
         return results
@@ -91,9 +104,15 @@ class ConvertibleFetcher:
             "convertible_legacy_cov", active_source="fallback", is_fallback=True
         ):
             df = ak.bond_zh_cov()
+        status_map = self._fetch_convertible_status_map()
         results = []
         for _, row in df.iterrows():
-            symbol = f"{row.get('债券代码', 'N/A')}({row.get('债券简称', 'N/A')})"
+            code = str(row.get("债券代码", "") or "").strip()
+            name = str(row.get("债券简称", "") or "").strip()
+            status = status_map.get(code)
+            if not self._is_active_status(status):
+                continue
+            symbol = f"{code}({name or 'N/A'})"
             try:
                 price = float(row.get("债现价", 0) or 0)
                 premium_rate = float(row.get("转股溢价率", 0) or 0)
@@ -112,10 +131,28 @@ class ConvertibleFetcher:
                     double_low=price + premium_rate,
                     price=price,
                     ytm=0.0,
+                    bond_code=code,
+                    bond_name=name,
+                    listing_status=str(status["listing_status"]),
+                    is_listed=bool(status["is_listed"]),
+                    is_delisted=bool(status["is_delisted"]),
+                    listing_date=str(status.get("listing_date") or ""),
+                    delist_date=str(status.get("delist_date") or ""),
                 )
             )
         logger.info("legacy_cov_fallback_success", count=len(results))
         return results
+
+    def _fetch_convertible_status_map(self) -> Dict[str, dict[str, Any]]:
+        with source_health_context(
+            "convertible_eastmoney_status", active_source="fallback", is_fallback=True
+        ):
+            rows = self._fetch_eastmoney_rows()
+        return {
+            str(row.get("SECURITY_CODE") or "").strip(): self._extract_listing_status(row)
+            for row in rows
+            if str(row.get("SECURITY_CODE") or "").strip()
+        }
 
     def _fetch_eastmoney_rows(self) -> List[dict]:
         headers = {
@@ -167,6 +204,9 @@ class ConvertibleFetcher:
         name = row.get("SECURITY_NAME_ABBR") or row.get("债券简称")
         if not code or not name:
             return None
+        status = self._extract_listing_status(row)
+        if not self._is_active_status(status):
+            return None
 
         price = self._to_float(
             row.get("CURRENT_BOND_PRICENEW"),
@@ -189,7 +229,52 @@ class ConvertibleFetcher:
             double_low=double_low,
             price=price,
             ytm=ytm,
+            bond_code=str(code),
+            bond_name=str(name),
+            listing_status=str(status["listing_status"]),
+            is_listed=bool(status["is_listed"]),
+            is_delisted=bool(status["is_delisted"]),
+            listing_date=str(status.get("listing_date") or ""),
+            delist_date=str(status.get("delist_date") or ""),
         )
+
+    def _parse_optional_datetime(self, value: Any) -> Optional[datetime]:
+        text = str(value or "").strip()
+        if not text or text.lower() == "none":
+            return None
+        try:
+            return datetime.fromisoformat(text.replace(" ", "T"))
+        except ValueError:
+            return None
+
+    def _extract_listing_status(self, row: dict) -> dict[str, Any]:
+        now = datetime.now()
+        listing_date = self._parse_optional_datetime(
+            row.get("LISTING_DATE") or row.get("SECURITY_START_DATE")
+        )
+        delist_date = self._parse_optional_datetime(
+            row.get("DELIST_DATE") or row.get("CEASE_DATE")
+        )
+        is_listed = listing_date is not None and listing_date <= now
+        is_delisted = delist_date is not None and delist_date <= now
+        if is_delisted:
+            listing_status = "DELISTED"
+        elif is_listed:
+            listing_status = "LISTED"
+        else:
+            listing_status = "UNLISTED"
+        return {
+            "listing_status": listing_status,
+            "is_listed": is_listed,
+            "is_delisted": is_delisted,
+            "listing_date": listing_date.isoformat() if listing_date else "",
+            "delist_date": delist_date.isoformat() if delist_date else "",
+        }
+
+    def _is_active_status(self, status: Optional[dict[str, Any]]) -> bool:
+        if not status:
+            return False
+        return bool(status.get("is_listed")) and not bool(status.get("is_delisted"))
 
     def _estimate_ytm_from_row(self, row: dict, price: float) -> float:
         interest_text = row.get("INTEREST_RATE_EXPLAIN") or ""
@@ -302,14 +387,22 @@ class ConvertibleFetcher:
         for item in raw_data:
             dt = datetime.fromisoformat(item["timestamp"].replace("Z", "+00:00"))
             dt = dt.replace(tzinfo=None)
+            symbol = item["symbol"]
+            bond_code, _, suffix = symbol.partition("(")
+            bond_name = suffix.rstrip(")")
             results.append(
                 CBData(
-                    symbol=item["symbol"],
+                    symbol=symbol,
                     timestamp=dt,
                     premium_rate=item["premium_rate"],
                     double_low=item["double_low"],
                     price=item.get("price", 100.0),   # 修复: 从 fixture 读取 price，默认 100 元
                     ytm=item.get("ytm", 0.0),          # 修复: 从 fixture 读取 ytm，默认 0%
+                    bond_code=bond_code,
+                    bond_name=bond_name,
+                    listing_status="LISTED",
+                    is_listed=True,
+                    is_delisted=False,
                 )
             )
         return results

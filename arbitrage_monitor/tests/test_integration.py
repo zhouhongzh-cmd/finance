@@ -8,6 +8,7 @@ import sys
 import os
 import io
 import tempfile
+from pathlib import Path
 from typing import Any
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -247,82 +248,117 @@ def test_runtime_config_local_override():
 
 
 def test_futures_dual_threshold_trigger():
-    """测试期指贴水率阈值和年化贴水率阈值任一触发即可报警。"""
+    """测试期指贴水率阈值和年化贴水率阈值必须同时触发才报警。"""
     logger.info("test_futures_dual_threshold_trigger_start")
 
-    from config.settings import settings
     from models.market_data import FuturesData
     from strategies.futures_strategy import FuturesDiscountStrategy
+    import utils.futures_config as futures_config
 
-    original = {
-        "FUTURES_DISCOUNT_PERCENT_THRESHOLD": settings.FUTURES_DISCOUNT_PERCENT_THRESHOLD,
-        "FUTURES_DISCOUNT_RATE_THRESHOLD": settings.FUTURES_DISCOUNT_RATE_THRESHOLD,
-        "ENABLE_FUTURES_DISCOUNT_PERCENT_THRESHOLD": settings.ENABLE_FUTURES_DISCOUNT_PERCENT_THRESHOLD,
-        "ENABLE_FUTURES_DISCOUNT_RATE_THRESHOLD": settings.ENABLE_FUTURES_DISCOUNT_RATE_THRESHOLD,
-    }
+    original_shared_path_fn = futures_config.get_futures_thresholds_path
+    original_local_path_fn = futures_config.get_local_futures_thresholds_path
+    original_cache = futures_config._threshold_cache
 
-    try:
-        settings.apply_updates(
-            {
-                "ENABLE_FUTURES_DISCOUNT_PERCENT_THRESHOLD": True,
-                "ENABLE_FUTURES_DISCOUNT_RATE_THRESHOLD": True,
-                "FUTURES_DISCOUNT_PERCENT_THRESHOLD": 1.0,
-                "FUTURES_DISCOUNT_RATE_THRESHOLD": 20.0,
-            }
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        shared_path = temp_root / "config" / "futures_thresholds.json"
+        local_path = temp_root / "config" / "futures_thresholds.local.json"
+        shared_path.parent.mkdir(parents=True, exist_ok=True)
+        shared_path.write_text(
+            json.dumps(
+                {
+                    product: {
+                        "enabled": True,
+                        "discount_percent_threshold": 1.0,
+                        "annualized_discount_threshold": 20.0,
+                    }
+                    for product in ("IH", "IF", "IC", "IM")
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
         )
-        strategy = FuturesDiscountStrategy()
-        percent_only = strategy.evaluate(
-            [
-                FuturesData(
-                    symbol="IF2604",
-                    timestamp=datetime.now(),
-                    price=3500,
-                    spot_price=3540,
-                    discount_rate=1.2,
-                    product_code="IF",
-                    days_to_maturity=40,
-                )
-            ]
-        )
-        annualized_only = strategy.evaluate(
-            [
-                FuturesData(
-                    symbol="IC2606",
-                    timestamp=datetime.now(),
-                    price=5100,
-                    spot_price=5120,
-                    discount_rate=0.4,
-                    product_code="IC",
-                    days_to_maturity=5,
-                )
-            ]
-        )
-        none_triggered = strategy.evaluate(
-            [
-                FuturesData(
-                    symbol="IH2604",
-                    timestamp=datetime.now(),
-                    price=2400,
-                    spot_price=2410,
-                    discount_rate=0.2,
-                    product_code="IH",
-                    days_to_maturity=20,
-                )
-            ]
-        )
-    finally:
-        settings.apply_updates(original)
+        futures_config.get_futures_thresholds_path = lambda: shared_path
+        futures_config.get_local_futures_thresholds_path = lambda: local_path
+        futures_config._threshold_cache = None
 
-    if len(percent_only) != 1:
-        print(f"❌ Futures Dual Threshold: expected percent-only trigger, got {len(percent_only)}")
+        try:
+            strategy = FuturesDiscountStrategy()
+            percent_only = strategy.evaluate(
+                [
+                    FuturesData(
+                        symbol="IF2604",
+                        timestamp=datetime.now(),
+                        price=3500,
+                        spot_price=3540,
+                        discount_rate=1.2,
+                        product_code="IF",
+                        days_to_maturity=40,
+                    )
+                ]
+            )
+            annualized_only = strategy.evaluate(
+                [
+                    FuturesData(
+                        symbol="IC2606",
+                        timestamp=datetime.now(),
+                        price=5100,
+                        spot_price=5120,
+                        discount_rate=0.4,
+                        product_code="IC",
+                        days_to_maturity=5,
+                    )
+                ]
+            )
+            none_triggered = strategy.evaluate(
+                [
+                    FuturesData(
+                        symbol="IH2604",
+                        timestamp=datetime.now(),
+                        price=2400,
+                        spot_price=2410,
+                        discount_rate=0.2,
+                        product_code="IH",
+                        days_to_maturity=20,
+                    )
+                ]
+            )
+            both_triggered = strategy.evaluate(
+                [
+                    FuturesData(
+                        symbol="IM2604",
+                        timestamp=datetime.now(),
+                        price=5200,
+                        spot_price=5300,
+                        discount_rate=2.2,
+                        product_code="IM",
+                        days_to_maturity=20,
+                    )
+                ]
+            )
+        finally:
+            futures_config.get_futures_thresholds_path = original_shared_path_fn
+            futures_config.get_local_futures_thresholds_path = original_local_path_fn
+            futures_config._threshold_cache = original_cache
+
+    if percent_only:
+        print(f"❌ Futures Dual Threshold: percent-only sample should not trigger, got {len(percent_only)}")
         return False
-    if len(annualized_only) != 1:
-        print(f"❌ Futures Dual Threshold: expected annualized-only trigger, got {len(annualized_only)}")
+    if annualized_only:
+        print(f"❌ Futures Dual Threshold: annualized-only sample should not trigger, got {len(annualized_only)}")
         return False
     if none_triggered:
         print("❌ Futures Dual Threshold: non-triggering sample should not alert")
         return False
-    if "贴水率阈值" not in percent_only[0].message or "年化贴水率阈值" not in percent_only[0].message:
+    if len(both_triggered) != 1:
+        print(f"❌ Futures Dual Threshold: expected dual trigger, got {len(both_triggered)}")
+        return False
+    if "同时满足阈值" not in both_triggered[0].message:
+        print("❌ Futures Dual Threshold: signal message missing dual-threshold wording")
+        return False
+    if "贴水率阈值" not in both_triggered[0].message or "年化贴水率阈值" not in both_triggered[0].message:
         print("❌ Futures Dual Threshold: signal message missing threshold detail")
         return False
 
@@ -486,62 +522,86 @@ def test_threshold_enable_switches():
     """测试阈值开关关闭后不再参与策略触发。"""
     logger.info("test_threshold_enable_switches_start")
 
-    from config.settings import settings
     from models.market_data import FuturesData, SentimentData
     from strategies.futures_strategy import FuturesDiscountStrategy
     from strategies.sentiment_strategy import SentimentStrategy
+    from config.settings import settings
+    import utils.futures_config as futures_config
 
-    original = {
-        "ENABLE_FUTURES_DISCOUNT_PERCENT_THRESHOLD": settings.ENABLE_FUTURES_DISCOUNT_PERCENT_THRESHOLD,
-        "ENABLE_FUTURES_DISCOUNT_RATE_THRESHOLD": settings.ENABLE_FUTURES_DISCOUNT_RATE_THRESHOLD,
-        "FUTURES_DISCOUNT_PERCENT_THRESHOLD": settings.FUTURES_DISCOUNT_PERCENT_THRESHOLD,
-        "FUTURES_DISCOUNT_RATE_THRESHOLD": settings.FUTURES_DISCOUNT_RATE_THRESHOLD,
+    original_sentiment = {
         "ENABLE_SENTIMENT_HOT_SCORE_THRESHOLD": settings.ENABLE_SENTIMENT_HOT_SCORE_THRESHOLD,
         "ENABLE_SENTIMENT_PULSE_THRESHOLD": settings.ENABLE_SENTIMENT_PULSE_THRESHOLD,
         "SENTIMENT_HOT_SCORE_THRESHOLD": settings.SENTIMENT_HOT_SCORE_THRESHOLD,
         "SENTIMENT_PULSE_THRESHOLD": settings.SENTIMENT_PULSE_THRESHOLD,
     }
+    original_shared_path_fn = futures_config.get_futures_thresholds_path
+    original_local_path_fn = futures_config.get_local_futures_thresholds_path
+    original_cache = futures_config._threshold_cache
 
-    try:
-        settings.apply_updates(
-            {
-                "ENABLE_FUTURES_DISCOUNT_PERCENT_THRESHOLD": False,
-                "ENABLE_FUTURES_DISCOUNT_RATE_THRESHOLD": False,
-                "FUTURES_DISCOUNT_PERCENT_THRESHOLD": 1.0,
-                "FUTURES_DISCOUNT_RATE_THRESHOLD": 8.0,
-                "ENABLE_SENTIMENT_HOT_SCORE_THRESHOLD": False,
-                "ENABLE_SENTIMENT_PULSE_THRESHOLD": False,
-                "SENTIMENT_HOT_SCORE_THRESHOLD": 500,
-                "SENTIMENT_PULSE_THRESHOLD": -0.5,
-            }
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        shared_path = temp_root / "config" / "futures_thresholds.json"
+        local_path = temp_root / "config" / "futures_thresholds.local.json"
+        shared_path.parent.mkdir(parents=True, exist_ok=True)
+        shared_path.write_text(
+            json.dumps(
+                {
+                    product: {
+                        "enabled": False,
+                        "discount_percent_threshold": 1.0,
+                        "annualized_discount_threshold": 8.0,
+                    }
+                    for product in ("IH", "IF", "IC", "IM")
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
         )
-        futures_signals = FuturesDiscountStrategy().evaluate(
-            [
-                FuturesData(
-                    symbol="IF2604",
-                    timestamp=datetime.now(),
-                    price=3500,
-                    spot_price=3540,
-                    discount_rate=1.2,
-                    product_code="IF",
-                    days_to_maturity=5,
-                )
-            ]
-        )
-        sentiment_signals = SentimentStrategy().evaluate(
-            [
-                SentimentData(
-                    symbol="TEST001",
-                    timestamp=datetime.now(),
-                    name="TEST001",
-                    hot_score=600,
-                    sentiment_pulse=-0.6,
-                    rank=1,
-                )
-            ]
-        )
-    finally:
-        settings.apply_updates(original)
+        futures_config.get_futures_thresholds_path = lambda: shared_path
+        futures_config.get_local_futures_thresholds_path = lambda: local_path
+        futures_config._threshold_cache = None
+
+        try:
+            settings.apply_updates(
+                {
+                    "ENABLE_SENTIMENT_HOT_SCORE_THRESHOLD": False,
+                    "ENABLE_SENTIMENT_PULSE_THRESHOLD": False,
+                    "SENTIMENT_HOT_SCORE_THRESHOLD": 500,
+                    "SENTIMENT_PULSE_THRESHOLD": -0.5,
+                }
+            )
+            futures_signals = FuturesDiscountStrategy().evaluate(
+                [
+                    FuturesData(
+                        symbol="IF2604",
+                        timestamp=datetime.now(),
+                        price=3500,
+                        spot_price=3540,
+                        discount_rate=1.2,
+                        product_code="IF",
+                        days_to_maturity=5,
+                    )
+                ]
+            )
+            sentiment_signals = SentimentStrategy().evaluate(
+                [
+                    SentimentData(
+                        symbol="TEST001",
+                        timestamp=datetime.now(),
+                        name="TEST001",
+                        hot_score=600,
+                        sentiment_pulse=-0.6,
+                        rank=1,
+                    )
+                ]
+            )
+        finally:
+            settings.apply_updates(original_sentiment)
+            futures_config.get_futures_thresholds_path = original_shared_path_fn
+            futures_config.get_local_futures_thresholds_path = original_local_path_fn
+            futures_config._threshold_cache = original_cache
 
     if futures_signals:
         print("❌ Threshold Enable Switches: futures thresholds disabled but still triggered")
@@ -552,6 +612,157 @@ def test_threshold_enable_switches():
 
     logger.info("threshold_enable_switches_ok")
     print("✅ Threshold Enable Switches: OK")
+    return True
+
+
+def test_alert_history_latest_only():
+    """测试同一 asset 只保留最新一条报警记录。"""
+    logger.info("test_alert_history_latest_only_start")
+
+    from models.signals import Signal
+
+    db = DBManager()
+    asset = "LATEST_ONLY_TEST"
+    with db.get_connection() as conn:
+        conn.execute("DELETE FROM alert_history WHERE asset = ?", (asset,))
+        conn.commit()
+
+    first_id = db.save_signal(
+        Signal(
+            asset=asset,
+            strategy_name="Strategy_A",
+            level="WARNING",
+            message="first",
+        )
+    )
+    second_id = db.save_signal(
+        Signal(
+            asset=asset,
+            strategy_name="Strategy_B",
+            level="CRITICAL",
+            message="second",
+        )
+    )
+
+    with db.get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, strategy, message FROM alert_history WHERE asset = ? ORDER BY id DESC",
+            (asset,),
+        ).fetchall()
+        conn.execute("DELETE FROM alert_history WHERE asset = ?", (asset,))
+        conn.commit()
+
+    if len(rows) != 1:
+        print(f"❌ Alert Latest Only: expected 1 row, got {len(rows)}")
+        return False
+    if rows[0][0] != second_id or rows[0][1] != "Strategy_B" or rows[0][2] != "second":
+        print(f"❌ Alert Latest Only: latest row mismatch {rows}")
+        return False
+    if first_id == second_id:
+        print("❌ Alert Latest Only: expected new insert id for replacement row")
+        return False
+
+    logger.info("alert_history_latest_only_ok", alert_id=second_id)
+    print("✅ Alert History Latest Only: OK")
+    return True
+
+
+def test_snapshot_deduplication():
+    """测试高频快照分钟去重与变化更新。"""
+    logger.info("test_snapshot_deduplication_start")
+
+    from models.market_data import FuturesData, MetalArbitrageData
+
+    db = DBManager()
+    base_ts = datetime.now().replace(second=5, microsecond=0)
+    later_same_minute = base_ts.replace(second=35)
+
+    futures_a = FuturesData(
+        symbol="DEDUP_IF",
+        timestamp=base_ts,
+        price=3500,
+        spot_price=3510,
+        discount_rate=1.0,
+        product_code="IF",
+        margin_ratio=12.0,
+        days_to_maturity=10,
+    )
+    futures_b = FuturesData(
+        symbol="DEDUP_IF",
+        timestamp=later_same_minute,
+        price=3501,
+        spot_price=3510,
+        discount_rate=1.1,
+        product_code="IF",
+        margin_ratio=12.0,
+        days_to_maturity=10,
+    )
+    db.save_futures_live_snapshots([futures_a])
+    db.save_futures_live_snapshots([futures_b])
+
+    metal_a = MetalArbitrageData(
+        symbol="DEDUP_AU:GC",
+        timestamp=base_ts,
+        metal_symbol="AU0",
+        metal_name="黄金",
+        benchmark_symbol="GC",
+        benchmark_name="COMEX黄金",
+        benchmark_display_name="COMEX GC",
+        domestic_symbol="au0",
+        domestic_name="沪金主力",
+        domestic_unit="元/克",
+        category="precious",
+        dom_price=700,
+        for_price_usd=2400,
+        for_price_cny=699,
+        exchange_rate=7.2,
+        implied_rate=7.18,
+        spread=1,
+        spread_pct=0.14,
+    )
+    metal_b = MetalArbitrageData(
+        symbol="DEDUP_AU:GC",
+        timestamp=later_same_minute,
+        metal_symbol="AU0",
+        metal_name="黄金",
+        benchmark_symbol="GC",
+        benchmark_name="COMEX黄金",
+        benchmark_display_name="COMEX GC",
+        domestic_symbol="au0",
+        domestic_name="沪金主力",
+        domestic_unit="元/克",
+        category="precious",
+        dom_price=701,
+        for_price_usd=2400,
+        for_price_cny=700,
+        exchange_rate=7.2,
+        implied_rate=7.18,
+        spread=1,
+        spread_pct=0.15,
+    )
+    db.save_metal_snapshots([metal_a])
+    db.save_metal_snapshots([metal_b])
+
+    with db.get_connection() as conn:
+        futures_rows = conn.execute(
+            "SELECT COUNT(*), MAX(price), MAX(discount_rate) FROM futures_live_snapshot WHERE symbol = 'DEDUP_IF'"
+        ).fetchone()
+        metal_rows = conn.execute(
+            "SELECT COUNT(*), MAX(dom_price), MAX(spread_pct) FROM metal_arbitrage_snapshot WHERE symbol = 'DEDUP_AU:GC'"
+        ).fetchone()
+        conn.execute("DELETE FROM futures_live_snapshot WHERE symbol = 'DEDUP_IF'")
+        conn.execute("DELETE FROM metal_arbitrage_snapshot WHERE symbol = 'DEDUP_AU:GC'")
+        conn.commit()
+
+    if futures_rows[0] != 1 or float(futures_rows[1]) != 3501 or float(futures_rows[2]) != 1.1:
+        print(f"❌ Snapshot Deduplication: futures rows mismatch {futures_rows}")
+        return False
+    if metal_rows[0] != 1 or float(metal_rows[1]) != 701 or float(metal_rows[2]) != 0.15:
+        print(f"❌ Snapshot Deduplication: metal rows mismatch {metal_rows}")
+        return False
+
+    logger.info("snapshot_deduplication_ok")
+    print("✅ Snapshot Deduplication: OK")
     return True
 
 
@@ -935,6 +1146,8 @@ def test_convertible_fallback_estimation():
         "COUPON_IR": 0.2,
         "INTEREST_RATE_EXPLAIN": "第一年为0.2%、第二年为0.4%、第三年为0.6%、第四年为1.0%、第五年为1.5%、第六年为2.0%。",
         "BOND_START_DATE": "2026-03-11 00:00:00",
+        "LISTING_DATE": "2026-03-18 00:00:00",
+        "DELIST_DATE": None,
         "REDEEM_CLAUSE": "到期赎回条款在本次发行的可转债期满后五个交易日内,发行人将按债券面值的110%(含最后一期利息)的价格赎回全部未转股的可转换公司债券。",
     }
 
@@ -961,6 +1174,105 @@ def test_convertible_fallback_estimation():
 
     logger.info("convertible_fallback_estimated", ytm=item.ytm, double_low=item.double_low)
     print(f"✅ Convertible Fallback: YTM={item.ytm}, double_low={item.double_low:.2f}")
+    return True
+
+
+def test_convertible_status_filter():
+    """测试可转债只保留已上市且未退市的记录。"""
+    logger.info("test_convertible_status_filter_start")
+
+    from fetchers.ak_convertible import ConvertibleFetcher
+
+    fetcher = ConvertibleFetcher()
+    listed = fetcher._build_cbdata_from_eastmoney_row(
+        {
+            "SECURITY_CODE": "123001",
+            "SECURITY_NAME_ABBR": "测试转债A",
+            "CURRENT_BOND_PRICENEW": 100,
+            "TRANSFER_VALUE": 101,
+            "TRANSFER_PREMIUM_RATIO": -1.0,
+            "LISTING_DATE": "2025-01-01 00:00:00",
+            "DELIST_DATE": None,
+            "BOND_START_DATE": "2024-01-01 00:00:00",
+            "INTEREST_RATE_EXPLAIN": "第一年为0.2%、第二年为0.4%。",
+            "REDEEM_CLAUSE": "到期按债券面值的110%赎回。",
+        }
+    )
+    unlisted = fetcher._build_cbdata_from_eastmoney_row(
+        {
+            "SECURITY_CODE": "123002",
+            "SECURITY_NAME_ABBR": "测试转债B",
+            "CURRENT_BOND_PRICENEW": 100,
+            "TRANSFER_VALUE": 101,
+            "TRANSFER_PREMIUM_RATIO": -1.0,
+            "LISTING_DATE": "2099-01-01 00:00:00",
+            "DELIST_DATE": None,
+            "BOND_START_DATE": "2024-01-01 00:00:00",
+            "INTEREST_RATE_EXPLAIN": "第一年为0.2%、第二年为0.4%。",
+            "REDEEM_CLAUSE": "到期按债券面值的110%赎回。",
+        }
+    )
+    delisted = fetcher._build_cbdata_from_eastmoney_row(
+        {
+            "SECURITY_CODE": "123003",
+            "SECURITY_NAME_ABBR": "测试转债C",
+            "CURRENT_BOND_PRICENEW": 100,
+            "TRANSFER_VALUE": 101,
+            "TRANSFER_PREMIUM_RATIO": -1.0,
+            "LISTING_DATE": "2020-01-01 00:00:00",
+            "DELIST_DATE": "2025-01-01 00:00:00",
+            "BOND_START_DATE": "2024-01-01 00:00:00",
+            "INTEREST_RATE_EXPLAIN": "第一年为0.2%、第二年为0.4%。",
+            "REDEEM_CLAUSE": "到期按债券面值的110%赎回。",
+        }
+    )
+
+    if listed is None or not listed.is_listed or listed.is_delisted:
+        print("❌ Convertible Status Filter: listed bond should be kept")
+        return False
+    if unlisted is not None:
+        print("❌ Convertible Status Filter: unlisted bond should be filtered")
+        return False
+    if delisted is not None:
+        print("❌ Convertible Status Filter: delisted bond should be filtered")
+        return False
+
+    logger.info("convertible_status_filter_ok")
+    print("✅ Convertible Status Filter: OK")
+    return True
+
+
+def test_sentiment_name_lookup():
+    """测试舆情抓取结果会补股票名称。"""
+    logger.info("test_sentiment_name_lookup_start")
+
+    from fetchers.sentiment_spider import SentimentFetcher
+
+    fetcher = SentimentFetcher()
+
+    class DummyResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"sc": "SZ002361", "rk": 1, "rc": 2, "hisRc": 1}]}
+
+    original_post = fetcher.client.post
+    original_name_lookup = fetcher._fetch_stock_name_map
+    try:
+        fetcher.client.post = lambda *args, **kwargs: DummyResponse()
+        fetcher._fetch_stock_name_map = lambda codes: {"SZ002361": "神剑股份"}
+        data = fetcher.fetch_live()
+    finally:
+        fetcher.client.post = original_post
+        fetcher._fetch_stock_name_map = original_name_lookup
+
+    if not data or data[0].name != "神剑股份":
+        print(f"❌ Sentiment Name Lookup: unexpected data {data}")
+        return False
+
+    logger.info("sentiment_name_lookup_ok", name=data[0].name)
+    print("✅ Sentiment Name Lookup: OK")
     return True
 
 
@@ -1277,6 +1589,94 @@ def test_metals_threshold_local_override():
 
     logger.info("metals_threshold_local_override_ok")
     print("✅ Metals Threshold Local Override: OK")
+    return True
+
+
+def test_futures_threshold_local_override():
+    """测试期指分品种阈值支持共享基线叠加本机 local 覆盖。"""
+    logger.info("test_futures_threshold_local_override_start")
+
+    import utils.futures_config as futures_config
+
+    original_shared_path_fn = futures_config.get_futures_thresholds_path
+    original_local_path_fn = futures_config.get_local_futures_thresholds_path
+    original_cache = futures_config._threshold_cache
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        shared_path = temp_root / "config" / "futures_thresholds.json"
+        local_path = temp_root / "config" / "futures_thresholds.local.json"
+        shared_path.parent.mkdir(parents=True, exist_ok=True)
+
+        shared_path.write_text(
+            json.dumps(
+                {
+                    "IH": {
+                        "enabled": False,
+                        "discount_percent_threshold": 1.0,
+                        "annualized_discount_threshold": 8.0,
+                    },
+                    "IF": {
+                        "enabled": True,
+                        "discount_percent_threshold": 1.2,
+                        "annualized_discount_threshold": 8.5,
+                    },
+                    "IC": {
+                        "enabled": True,
+                        "discount_percent_threshold": 1.3,
+                        "annualized_discount_threshold": 9.0,
+                    },
+                    "IM": {
+                        "enabled": True,
+                        "discount_percent_threshold": 1.4,
+                        "annualized_discount_threshold": 9.5,
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        local_path.write_text(
+            json.dumps(
+                {
+                    "IF": {
+                        "enabled": False,
+                        "discount_percent_threshold": 2.2,
+                        "annualized_discount_threshold": 12.5,
+                    }
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        futures_config.get_futures_thresholds_path = lambda: shared_path
+        futures_config.get_local_futures_thresholds_path = lambda: local_path
+        futures_config._threshold_cache = None
+
+        try:
+            effective = futures_config.load_futures_thresholds(force_reload=True)
+        finally:
+            futures_config.get_futures_thresholds_path = original_shared_path_fn
+            futures_config.get_local_futures_thresholds_path = original_local_path_fn
+            futures_config._threshold_cache = original_cache
+
+    if effective["IF"]["enabled"] is not False:
+        print("❌ Futures Threshold Local Override: local enabled override not applied")
+        return False
+    if float(effective["IF"]["discount_percent_threshold"]) != 2.2:
+        print("❌ Futures Threshold Local Override: local percent threshold not applied")
+        return False
+    if float(effective["IH"]["annualized_discount_threshold"]) != 8.0:
+        print("❌ Futures Threshold Local Override: shared value should remain when local missing")
+        return False
+
+    logger.info("futures_threshold_local_override_ok")
+    print("✅ Futures Threshold Local Override: OK")
     return True
 
 
@@ -1625,16 +2025,16 @@ def test_full_pipeline():
     from fetchers.ak_futures import futures_fetcher
     from strategies.futures_strategy import FuturesDiscountStrategy
     from config.settings import settings
-
-    data = futures_fetcher.fetch_from_fixture("tests/fixtures/futures_sample.json")
-    strategy = FuturesDiscountStrategy()
-    signals = strategy.evaluate(data)
+    import utils.futures_config as futures_config
 
     db = DBManager()
     deliveries: list[tuple[str, dict[str, Any]]] = []
     original_post_json = notifier._post_json
     original_feishu = settings.FEISHU_WEBHOOK_URL
     original_wecom = settings.WECOM_WEBHOOK_URL
+    original_shared_path_fn = futures_config.get_futures_thresholds_path
+    original_local_path_fn = futures_config.get_local_futures_thresholds_path
+    original_cache = futures_config._threshold_cache
 
     def fake_post_json(url: str, payload: dict[str, Any]):
         deliveries.append((url, payload))
@@ -1649,18 +2049,52 @@ def test_full_pipeline():
     settings.WECOM_WEBHOOK_URL = "https://example.com/wecom"
     notifier._post_json = fake_post_json
 
-    try:
-        alert_ids: list[int] = []
-        for signal in signals:
-            signal.alert_id = db.save_signal(signal)
-            alert_ids.append(signal.alert_id)
-            notifier.send(signal)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        shared_path = temp_root / "config" / "futures_thresholds.json"
+        local_path = temp_root / "config" / "futures_thresholds.local.json"
+        shared_path.parent.mkdir(parents=True, exist_ok=True)
+        shared_path.write_text(
+            json.dumps(
+                {
+                    product: {
+                        "enabled": True,
+                        "discount_percent_threshold": 0.2,
+                        "annualized_discount_threshold": 3.0,
+                    }
+                    for product in ("IH", "IF", "IC", "IM")
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        futures_config.get_futures_thresholds_path = lambda: shared_path
+        futures_config.get_local_futures_thresholds_path = lambda: local_path
+        futures_config._threshold_cache = None
 
-        notifier.flush()
-    finally:
-        notifier._post_json = original_post_json
-        settings.FEISHU_WEBHOOK_URL = original_feishu
-        settings.WECOM_WEBHOOK_URL = original_wecom
+        try:
+            data = futures_fetcher.fetch_from_fixture("tests/fixtures/futures_sample.json")
+            strategy = FuturesDiscountStrategy()
+            signals = strategy.evaluate(data)
+            if not signals:
+                print("❌ Full Pipeline: expected at least one signal")
+                return False
+            alert_ids: list[int] = []
+            for signal in signals:
+                signal.alert_id = db.save_signal(signal)
+                alert_ids.append(signal.alert_id)
+                notifier.send(signal)
+
+            notifier.flush()
+        finally:
+            futures_config.get_futures_thresholds_path = original_shared_path_fn
+            futures_config.get_local_futures_thresholds_path = original_local_path_fn
+            futures_config._threshold_cache = original_cache
+            notifier._post_json = original_post_json
+            settings.FEISHU_WEBHOOK_URL = original_feishu
+            settings.WECOM_WEBHOOK_URL = original_wecom
 
     with db.get_connection() as conn:
         cursor = conn.execute(
@@ -1944,6 +2378,8 @@ def main():
         ("Strategy Enable Switches", test_strategy_enable_switches),
         ("Mode Enable Switches", test_mode_enable_switches),
         ("Threshold Enable Switches", test_threshold_enable_switches),
+        ("Alert History Latest Only", test_alert_history_latest_only),
+        ("Snapshot Deduplication", test_snapshot_deduplication),
         ("Scheduler Runtime Sync", test_scheduler_runtime_settings_sync),
         ("Cooldown Restore", test_cooldown_restore_roundtrip),
         ("Retention Cleanup", test_retention_cleanup),
@@ -1954,10 +2390,13 @@ def main():
         ("Legacy Metals Migration", test_legacy_metals_threshold_migration),
         ("Current Metals Config Compatibility", test_current_metals_threshold_file_compatibility),
         ("Metals Threshold Local Override", test_metals_threshold_local_override),
+        ("Futures Threshold Local Override", test_futures_threshold_local_override),
         ("Source Health Tracking", test_source_health_tracking),
         ("Config Audit History", test_config_audit_history),
         ("Job Run Status Tracking", test_job_run_status_tracking),
         ("Convertible Fallback", test_convertible_fallback_estimation),
+        ("Convertible Status Filter", test_convertible_status_filter),
+        ("Sentiment Name Lookup", test_sentiment_name_lookup),
         ("Futures Margin", test_futures_margin_enrichment),
         ("Active Contracts", test_active_futures_contract_generation),
         ("Spot Index Fallback", test_spot_index_fallback_parser),

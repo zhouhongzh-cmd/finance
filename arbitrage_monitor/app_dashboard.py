@@ -43,6 +43,12 @@ st.set_page_config(
 db_manager = DBManager()
 
 
+def format_sentiment_asset(name: str, symbol: str) -> str:
+    if name and name != symbol:
+        return f"{symbol} {name}"
+    return symbol
+
+
 def level_badge(level: str) -> str:
     return {
         "INFO": "🔵 INFO",
@@ -346,10 +352,10 @@ def fetch_sentiment_live_view() -> tuple[pd.DataFrame, pd.DataFrame]:
 
     rows = []
     for item in data:
-        asset = f"{item.name}({item.symbol})"
+        asset = format_sentiment_asset(item.name, item.symbol)
         rows.append(
             {
-                "名称": item.name,
+                "股票名称": item.name,
                 "代码": item.symbol,
                 "时间": item.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
                 "排行": item.rank,

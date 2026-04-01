@@ -36,6 +36,13 @@ class CBData(BaseMarketData):
     double_low: float
     price: float = 0.0
     ytm: float = 0.0
+    bond_code: str = ""
+    bond_name: str = ""
+    listing_status: str = ""
+    is_listed: bool = False
+    is_delisted: bool = False
+    listing_date: str = ""
+    delist_date: str = ""
 
 @dataclass
 class CryptoFundingData(BaseMarketData):

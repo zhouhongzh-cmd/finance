@@ -10,6 +10,7 @@ build/
 .env
 config/runtime_settings.local.json
 config/metals_thresholds.local.json
+config/futures_thresholds.local.json
 *.db
 *.db-wal
 *.db-shm

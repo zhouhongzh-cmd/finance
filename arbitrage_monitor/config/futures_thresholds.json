@@ -1,0 +1,22 @@
+{
+  "IH": {
+    "enabled": false,
+    "discount_percent_threshold": 1.0,
+    "annualized_discount_threshold": 8.0
+  },
+  "IF": {
+    "enabled": false,
+    "discount_percent_threshold": 1.0,
+    "annualized_discount_threshold": 8.0
+  },
+  "IC": {
+    "enabled": false,
+    "discount_percent_threshold": 1.0,
+    "annualized_discount_threshold": 8.0
+  },
+  "IM": {
+    "enabled": false,
+    "discount_percent_threshold": 1.0,
+    "annualized_discount_threshold": 8.0
+  }
+}

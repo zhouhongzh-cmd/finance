@@ -5,6 +5,12 @@ from models.market_data import SentimentData
 from config.settings import settings
 
 class SentimentStrategy(BaseStrategy):
+    @staticmethod
+    def _display_asset(item: SentimentData) -> str:
+        if item.name and item.name != item.symbol:
+            return f"{item.symbol} {item.name}"
+        return item.symbol
+
     @property
     def name(self) -> str:
         return "Sentiment_Heat_and_Risk"
@@ -14,10 +20,11 @@ class SentimentStrategy(BaseStrategy):
         hot_score_threshold = settings.SENTIMENT_HOT_SCORE_THRESHOLD
         pulse_threshold = settings.SENTIMENT_PULSE_THRESHOLD
         for item in data:
+            asset = self._display_asset(item)
             # 逻辑 1: 雪球热度异常飙升
             if settings.ENABLE_SENTIMENT_HOT_SCORE_THRESHOLD and item.hot_score > hot_score_threshold:
                 signals.append(Signal(
-                    asset=f"{item.name}({item.symbol})",
+                    asset=asset,
                     strategy_name=self.name,
                     level="WARNING",
                     message=f"舆情热度异常飙升！当前热度值: {item.hot_score}，排行: {item.rank}",
@@ -27,7 +34,7 @@ class SentimentStrategy(BaseStrategy):
             # 逻辑 2: 负面舆情聚集 (排雷)
             if settings.ENABLE_SENTIMENT_PULSE_THRESHOLD and item.sentiment_pulse < pulse_threshold:
                 signals.append(Signal(
-                    asset=f"{item.name}({item.symbol})",
+                    asset=asset,
                     strategy_name=self.name,
                     level="CRITICAL",
                     message=f"检测到极端负面情绪聚集 (排雷预警)！情绪脉冲值: {item.sentiment_pulse}",

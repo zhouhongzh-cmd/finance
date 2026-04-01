@@ -13,6 +13,7 @@ class DBManager:
     """提供线程安全的 SQLite WAL 连接与持久化"""
     _instance = None
     _lock = threading.Lock()
+    SNAPSHOT_HEARTBEAT_MINUTES = 15
     
     def __new__(cls, db_path="data/monitor_history.db"):
         with cls._lock:
@@ -165,10 +166,144 @@ class DBManager:
         finally:
             conn.close()
 
+    def _same_minute(self, left: datetime, right: datetime) -> bool:
+        return left.replace(second=0, microsecond=0) == right.replace(second=0, microsecond=0)
+
+    def _heartbeat_due(self, current: datetime, previous: datetime) -> bool:
+        return (current - previous) >= timedelta(minutes=self.SNAPSHOT_HEARTBEAT_MINUTES)
+
+    def _build_futures_snapshot_state(self, snapshot: FuturesData) -> dict:
+        return {
+            "fetched_at": snapshot.timestamp,
+            "price": float(snapshot.price),
+            "spot_price": float(snapshot.spot_price),
+            "discount_rate": float(snapshot.discount_rate),
+            "margin_ratio": float(snapshot.margin_ratio),
+            "days_to_maturity": int(snapshot.days_to_maturity),
+        }
+
+    def _build_metal_snapshot_state(self, snapshot: MetalArbitrageData) -> dict:
+        return {
+            "fetched_at": snapshot.timestamp,
+            "dom_price": float(snapshot.dom_price),
+            "for_price_cny": float(snapshot.for_price_cny),
+            "spread": float(snapshot.spread),
+            "spread_pct": float(snapshot.spread_pct),
+            "exchange_rate": float(snapshot.exchange_rate),
+        }
+
+    def _get_latest_futures_snapshot_rows(self, conn, symbols: list[str]) -> dict[str, dict]:
+        if not symbols:
+            return {}
+        placeholders = ",".join(["?"] * len(symbols))
+        rows = conn.execute(
+            f"""
+            SELECT f.id, f.symbol, f.price, f.spot_price, f.discount_rate, f.margin_ratio,
+                   f.days_to_maturity, f.fetched_at
+            FROM futures_live_snapshot f
+            INNER JOIN (
+                SELECT symbol, MAX(id) AS max_id
+                FROM futures_live_snapshot
+                WHERE symbol IN ({placeholders})
+                GROUP BY symbol
+            ) latest
+            ON f.id = latest.max_id
+            """,
+            tuple(symbols),
+        ).fetchall()
+        result: dict[str, dict] = {}
+        for row in rows:
+            result[row[1]] = {
+                "id": int(row[0]),
+                "price": float(row[2]),
+                "spot_price": float(row[3]),
+                "discount_rate": float(row[4]),
+                "margin_ratio": float(row[5]),
+                "days_to_maturity": int(row[6]),
+                "fetched_at": datetime.fromisoformat(row[7]),
+            }
+        return result
+
+    def _get_latest_metal_snapshot_rows(self, conn, symbols: list[str]) -> dict[str, dict]:
+        if not symbols:
+            return {}
+        placeholders = ",".join(["?"] * len(symbols))
+        rows = conn.execute(
+            f"""
+            SELECT m.id, m.symbol, m.dom_price, m.for_price_cny, m.spread, m.spread_pct,
+                   m.exchange_rate, m.fetched_at
+            FROM metal_arbitrage_snapshot m
+            INNER JOIN (
+                SELECT symbol, MAX(id) AS max_id
+                FROM metal_arbitrage_snapshot
+                WHERE symbol IN ({placeholders})
+                GROUP BY symbol
+            ) latest
+            ON m.id = latest.max_id
+            """,
+            tuple(symbols),
+        ).fetchall()
+        result: dict[str, dict] = {}
+        for row in rows:
+            result[row[1]] = {
+                "id": int(row[0]),
+                "dom_price": float(row[2]),
+                "for_price_cny": float(row[3]),
+                "spread": float(row[4]),
+                "spread_pct": float(row[5]),
+                "exchange_rate": float(row[6]),
+                "fetched_at": datetime.fromisoformat(row[7]),
+            }
+        return result
+
+    def _classify_futures_snapshot_write(self, snapshot: FuturesData, latest: Optional[dict]) -> str:
+        if latest is None:
+            return "insert"
+        current_ts = snapshot.timestamp
+        latest_ts = latest["fetched_at"]
+        changed = any(
+            (
+                float(snapshot.price) != latest["price"],
+                float(snapshot.spot_price) != latest["spot_price"],
+                float(snapshot.discount_rate) != latest["discount_rate"],
+                float(snapshot.margin_ratio) != latest["margin_ratio"],
+                int(snapshot.days_to_maturity) != latest["days_to_maturity"],
+            )
+        )
+        if self._same_minute(current_ts, latest_ts):
+            return "update" if changed else "skip"
+        if changed or self._heartbeat_due(current_ts, latest_ts):
+            return "insert"
+        return "skip"
+
+    def _classify_metal_snapshot_write(self, snapshot: MetalArbitrageData, latest: Optional[dict]) -> str:
+        if latest is None:
+            return "insert"
+        current_ts = snapshot.timestamp
+        latest_ts = latest["fetched_at"]
+        changed = any(
+            (
+                float(snapshot.dom_price) != latest["dom_price"],
+                float(snapshot.for_price_cny) != latest["for_price_cny"],
+                float(snapshot.spread) != latest["spread"],
+                float(snapshot.spread_pct) != latest["spread_pct"],
+                float(snapshot.exchange_rate) != latest["exchange_rate"],
+            )
+        )
+        if self._same_minute(current_ts, latest_ts):
+            return "update" if changed else "skip"
+        if changed or self._heartbeat_due(current_ts, latest_ts):
+            return "insert"
+        return "skip"
+
     def save_signal(self, signal: Signal) -> int:
         """保存信号并返回记录 ID。"""
         with self._write_lock:
             with self.get_connection() as conn:
+                conn.execute(
+                    "DELETE FROM alert_history WHERE asset = ?",
+                    (signal.asset,),
+                )
                 cursor = conn.execute(
                     """
                     INSERT INTO alert_history (timestamp, asset, strategy, level, message, notified)
@@ -224,82 +359,131 @@ class DBManager:
                 conn.commit()
 
     def save_futures_live_snapshots(self, snapshots: Iterable[FuturesData]) -> None:
-        rows = [
-            (
-                snapshot.symbol,
-                snapshot.product_code,
-                snapshot.price,
-                snapshot.spot_price,
-                snapshot.discount_rate,
-                snapshot.contract_multiplier,
-                snapshot.margin_ratio,
-                snapshot.notional_per_lot,
-                snapshot.margin_required_per_lot,
-                snapshot.days_to_maturity,
-                snapshot.timestamp.isoformat(),
-            )
-            for snapshot in snapshots
-        ]
-        if not rows:
+        snapshots = list(snapshots)
+        if not snapshots:
             return
 
         with self._write_lock:
             with self.get_connection() as conn:
-                conn.executemany(
-                    """
-                    INSERT INTO futures_live_snapshot
-                    (symbol, product_code, price, spot_price, discount_rate, contract_multiplier,
-                     margin_ratio, notional_per_lot, margin_required_per_lot, days_to_maturity, fetched_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    rows,
+                latest_rows = self._get_latest_futures_snapshot_rows(
+                    conn, [snapshot.symbol for snapshot in snapshots]
                 )
+                for snapshot in snapshots:
+                    latest = latest_rows.get(snapshot.symbol)
+                    action = self._classify_futures_snapshot_write(snapshot, latest)
+                    if action == "skip":
+                        continue
+                    row = (
+                        snapshot.symbol,
+                        snapshot.product_code,
+                        snapshot.price,
+                        snapshot.spot_price,
+                        snapshot.discount_rate,
+                        snapshot.contract_multiplier,
+                        snapshot.margin_ratio,
+                        snapshot.notional_per_lot,
+                        snapshot.margin_required_per_lot,
+                        snapshot.days_to_maturity,
+                        snapshot.timestamp.isoformat(),
+                    )
+                    if action == "update" and latest is not None:
+                        conn.execute(
+                            """
+                            UPDATE futures_live_snapshot
+                            SET product_code = ?, price = ?, spot_price = ?, discount_rate = ?,
+                                contract_multiplier = ?, margin_ratio = ?, notional_per_lot = ?,
+                                margin_required_per_lot = ?, days_to_maturity = ?, fetched_at = ?
+                            WHERE id = ?
+                            """,
+                            row[1:] + (latest["id"],),
+                        )
+                    else:
+                        cursor = conn.execute(
+                            """
+                            INSERT INTO futures_live_snapshot
+                            (symbol, product_code, price, spot_price, discount_rate, contract_multiplier,
+                             margin_ratio, notional_per_lot, margin_required_per_lot, days_to_maturity, fetched_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            row,
+                        )
+                        latest = {"id": int(cursor.lastrowid), **self._build_futures_snapshot_state(snapshot)}
+                    latest_rows[snapshot.symbol] = {
+                        "id": latest["id"],
+                        **self._build_futures_snapshot_state(snapshot),
+                    }
                 conn.commit()
 
     def save_metal_snapshots(self, snapshots: Iterable[MetalArbitrageData]) -> None:
-        rows = [
-            (
-                snapshot.symbol,
-                snapshot.metal_symbol,
-                snapshot.metal_name,
-                snapshot.benchmark_symbol,
-                snapshot.benchmark_name,
-                snapshot.benchmark_display_name,
-                snapshot.domestic_symbol,
-                snapshot.domestic_name,
-                snapshot.domestic_unit,
-                snapshot.category,
-                snapshot.dom_price,
-                snapshot.for_price_usd,
-                snapshot.for_price_cny,
-                snapshot.exchange_rate,
-                snapshot.implied_rate,
-                snapshot.spread,
-                snapshot.spread_pct,
-                snapshot.dom_time,
-                snapshot.for_time,
-                snapshot.for_date,
-                1 if snapshot.used_api_cny_quote else 0,
-                snapshot.timestamp.isoformat(),
-            )
-            for snapshot in snapshots
-        ]
-        if not rows:
+        snapshots = list(snapshots)
+        if not snapshots:
             return
 
         with self._write_lock:
             with self.get_connection() as conn:
-                conn.executemany(
-                    """
-                    INSERT INTO metal_arbitrage_snapshot
-                    (symbol, metal_symbol, metal_name, benchmark_symbol, benchmark_name, benchmark_display_name,
-                     domestic_symbol, domestic_name, domestic_unit, category, dom_price, for_price_usd,
-                     for_price_cny, exchange_rate, implied_rate, spread, spread_pct, dom_time, for_time,
-                     for_date, used_api_cny_quote, fetched_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    rows,
+                latest_rows = self._get_latest_metal_snapshot_rows(
+                    conn, [snapshot.symbol for snapshot in snapshots]
                 )
+                for snapshot in snapshots:
+                    latest = latest_rows.get(snapshot.symbol)
+                    action = self._classify_metal_snapshot_write(snapshot, latest)
+                    if action == "skip":
+                        continue
+                    row = (
+                        snapshot.symbol,
+                        snapshot.metal_symbol,
+                        snapshot.metal_name,
+                        snapshot.benchmark_symbol,
+                        snapshot.benchmark_name,
+                        snapshot.benchmark_display_name,
+                        snapshot.domestic_symbol,
+                        snapshot.domestic_name,
+                        snapshot.domestic_unit,
+                        snapshot.category,
+                        snapshot.dom_price,
+                        snapshot.for_price_usd,
+                        snapshot.for_price_cny,
+                        snapshot.exchange_rate,
+                        snapshot.implied_rate,
+                        snapshot.spread,
+                        snapshot.spread_pct,
+                        snapshot.dom_time,
+                        snapshot.for_time,
+                        snapshot.for_date,
+                        1 if snapshot.used_api_cny_quote else 0,
+                        snapshot.timestamp.isoformat(),
+                    )
+                    if action == "update" and latest is not None:
+                        conn.execute(
+                            """
+                            UPDATE metal_arbitrage_snapshot
+                            SET metal_symbol = ?, metal_name = ?, benchmark_symbol = ?, benchmark_name = ?,
+                                benchmark_display_name = ?, domestic_symbol = ?, domestic_name = ?,
+                                domestic_unit = ?, category = ?, dom_price = ?, for_price_usd = ?,
+                                for_price_cny = ?, exchange_rate = ?, implied_rate = ?, spread = ?,
+                                spread_pct = ?, dom_time = ?, for_time = ?, for_date = ?,
+                                used_api_cny_quote = ?, fetched_at = ?
+                            WHERE id = ?
+                            """,
+                            row[1:] + (latest["id"],),
+                        )
+                    else:
+                        cursor = conn.execute(
+                            """
+                            INSERT INTO metal_arbitrage_snapshot
+                            (symbol, metal_symbol, metal_name, benchmark_symbol, benchmark_name, benchmark_display_name,
+                             domestic_symbol, domestic_name, domestic_unit, category, dom_price, for_price_usd,
+                             for_price_cny, exchange_rate, implied_rate, spread, spread_pct, dom_time, for_time,
+                             for_date, used_api_cny_quote, fetched_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            row,
+                        )
+                        latest = {"id": int(cursor.lastrowid), **self._build_metal_snapshot_state(snapshot)}
+                    latest_rows[snapshot.symbol] = {
+                        "id": latest["id"],
+                        **self._build_metal_snapshot_state(snapshot),
+                    }
                 conn.commit()
 
     def save_cooldown_state(self, strategy_key: str, last_alert_iso: str) -> None:
