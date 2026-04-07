@@ -14,9 +14,10 @@ FUTURES_FRONT_COLUMNS = [
     "名称",
     "期指价格",
     "指数点位",
-    "贴水点数",
-    "贴水率(%)",
-    "年化贴水率(%)",
+    "方向",
+    "价差点数",
+    "价差率(%)",
+    "年化价差率(%)",
     "时间",
 ]
 
@@ -44,12 +45,15 @@ METALS_FRONT_COLUMNS = [
 PREMIUM_GROUP_ORDER = {"BTC": 0, "A50": 1}
 PREMIUM_FRONT_COLUMNS = [
     "资产组",
+    "市场",
     "现货代码",
     "现货价格",
     "期货代码",
     "期货价格",
     "溢价值",
     "溢价率(%)",
+    "年化溢价率(%)",
+    "剩余天数",
     "状态",
     "时间",
 ]
@@ -73,14 +77,18 @@ def build_futures_live_tables(
         maturity_date = (datetime.now() + timedelta(days=item.days_to_maturity)).strftime(
             "%Y-%m-%d"
         )
+        direction = "贴水" if item.discount_rate >= 0 else "升水"
+        rate_value = item.discount_rate if item.discount_rate >= 0 else -item.discount_rate
+        annualized_value = annualized if annualized >= 0 else -annualized
         rows.append(
             {
                 "名称": item.symbol,
                 "期指价格": round(item.price, 2),
                 "指数点位": round(item.spot_price, 2),
-                "贴水点数": round(item.spot_price - item.price, 2),
-                "贴水率(%)": round(item.discount_rate, 4),
-                "年化贴水率(%)": round(annualized, 4),
+                "方向": direction,
+                "价差点数": round(abs(item.spot_price - item.price), 2),
+                "价差率(%)": round(rate_value, 4),
+                "年化价差率(%)": round(annualized_value, 4),
                 "时间": item.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
                 "到期日": maturity_date,
                 "剩余天数": item.days_to_maturity,
@@ -173,9 +181,15 @@ def build_premium_live_tables(
     rows = []
     for item in data:
         asset = "BTC 期现" if item.asset_group == "BTC" else f"A50 {item.future_name or item.future_symbol}"
+        annualized = (
+            item.premium_rate * (365 / max(item.days_to_maturity, 1))
+            if item.days_to_maturity is not None
+            else None
+        )
         rows.append(
             {
                 "资产组": item.asset_group,
+                "市场": "加密货币" if item.asset_group == "BTC" else "A50",
                 "现货代码": item.spot_symbol,
                 "现货名称": item.spot_name,
                 "现货价格": round(item.spot_price, 4),
@@ -184,12 +198,15 @@ def build_premium_live_tables(
                 "期货价格": round(item.future_price, 4),
                 "溢价值": round(item.premium, 4),
                 "溢价率(%)": round(item.premium_rate, 4),
+                "年化溢价率(%)": round(annualized, 4) if annualized is not None else "N/A",
+                "剩余天数": item.days_to_maturity if item.days_to_maturity is not None else "N/A",
                 "状态": "升水" if item.state == "contango" else "贴水",
                 "现货来源": item.source_spot,
                 "期货来源": item.source_future,
                 "时间": item.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
                 "信号": signal_map.get(asset, ""),
                 "_group_order": PREMIUM_GROUP_ORDER.get(item.asset_group, 999),
+                "_contract_order": 0 if item.future_symbol == "CN00Y" else 1,
             }
         )
 
@@ -207,7 +224,9 @@ def build_premium_live_tables(
     if df.empty:
         return df, pd.DataFrame(signal_rows)
 
-    df = df.sort_values(by=["_group_order", "期货代码"]).drop(columns=["_group_order"])
+    df = df.sort_values(by=["_group_order", "_contract_order", "期货代码"]).drop(
+        columns=["_group_order", "_contract_order"]
+    )
     remaining_columns = [col for col in df.columns if col not in PREMIUM_FRONT_COLUMNS]
     df = df[PREMIUM_FRONT_COLUMNS + remaining_columns]
     return df, pd.DataFrame(signal_rows)

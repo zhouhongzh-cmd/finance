@@ -1,14 +1,22 @@
 {
   "BTC": {
-    "upper": 0.5,
-    "lower": -0.5,
-    "upper_enabled": true,
-    "lower_enabled": true
+    "contango_enabled": true,
+    "contango_threshold": 0.5,
+    "annualized_contango_enabled": true,
+    "annualized_contango_threshold": 8.0,
+    "backwardation_enabled": true,
+    "backwardation_threshold": -0.5,
+    "annualized_backwardation_enabled": true,
+    "annualized_backwardation_threshold": -8.0
   },
   "A50": {
-    "upper": 0.5,
-    "lower": -0.5,
-    "upper_enabled": true,
-    "lower_enabled": true
+    "contango_enabled": true,
+    "contango_threshold": 0.5,
+    "annualized_contango_enabled": true,
+    "annualized_contango_threshold": 8.0,
+    "backwardation_enabled": true,
+    "backwardation_threshold": -0.5,
+    "annualized_backwardation_enabled": true,
+    "annualized_backwardation_threshold": -8.0
   }
 }

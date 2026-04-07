@@ -97,5 +97,6 @@ class PremiumArbitrageData(BaseMarketData):
     premium: float
     premium_rate: float
     state: str
+    days_to_maturity: Optional[int] = None
     source_spot: str = ""
     source_future: str = ""

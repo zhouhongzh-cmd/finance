@@ -14,16 +14,24 @@ PREMIUM_ASSETS: dict[str, str] = {
 
 DEFAULT_PREMIUM_THRESHOLDS: dict[str, dict[str, float | bool]] = {
     "BTC": {
-        "upper": 0.5,
-        "lower": -0.5,
-        "upper_enabled": True,
-        "lower_enabled": True,
+        "contango_enabled": True,
+        "contango_threshold": 0.5,
+        "annualized_contango_enabled": True,
+        "annualized_contango_threshold": 8.0,
+        "backwardation_enabled": True,
+        "backwardation_threshold": -0.5,
+        "annualized_backwardation_enabled": True,
+        "annualized_backwardation_threshold": -8.0,
     },
     "A50": {
-        "upper": 0.5,
-        "lower": -0.5,
-        "upper_enabled": True,
-        "lower_enabled": True,
+        "contango_enabled": True,
+        "contango_threshold": 0.5,
+        "annualized_contango_enabled": True,
+        "annualized_contango_threshold": 8.0,
+        "backwardation_enabled": True,
+        "backwardation_threshold": -0.5,
+        "annualized_backwardation_enabled": True,
+        "annualized_backwardation_threshold": -8.0,
     },
 }
 
@@ -58,13 +66,53 @@ def _normalize_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[str, flo
         if asset_group not in normalized or not isinstance(values, dict):
             continue
         normalized[asset_group] = {
-            "upper": float(values.get("upper", normalized[asset_group]["upper"])),
-            "lower": float(values.get("lower", normalized[asset_group]["lower"])),
-            "upper_enabled": bool(
-                values.get("upper_enabled", normalized[asset_group]["upper_enabled"])
+            "contango_enabled": bool(
+                values.get(
+                    "contango_enabled",
+                    values.get("upper_enabled", normalized[asset_group]["contango_enabled"]),
+                )
             ),
-            "lower_enabled": bool(
-                values.get("lower_enabled", normalized[asset_group]["lower_enabled"])
+            "contango_threshold": float(
+                values.get(
+                    "contango_threshold",
+                    values.get("upper", normalized[asset_group]["contango_threshold"]),
+                )
+            ),
+            "annualized_contango_enabled": bool(
+                values.get(
+                    "annualized_contango_enabled",
+                    normalized[asset_group]["annualized_contango_enabled"],
+                )
+            ),
+            "annualized_contango_threshold": float(
+                values.get(
+                    "annualized_contango_threshold",
+                    normalized[asset_group]["annualized_contango_threshold"],
+                )
+            ),
+            "backwardation_enabled": bool(
+                values.get(
+                    "backwardation_enabled",
+                    values.get("lower_enabled", normalized[asset_group]["backwardation_enabled"]),
+                )
+            ),
+            "backwardation_threshold": float(
+                values.get(
+                    "backwardation_threshold",
+                    values.get("lower", normalized[asset_group]["backwardation_threshold"]),
+                )
+            ),
+            "annualized_backwardation_enabled": bool(
+                values.get(
+                    "annualized_backwardation_enabled",
+                    normalized[asset_group]["annualized_backwardation_enabled"],
+                )
+            ),
+            "annualized_backwardation_threshold": float(
+                values.get(
+                    "annualized_backwardation_threshold",
+                    normalized[asset_group]["annualized_backwardation_threshold"],
+                )
             ),
         }
     return normalized
@@ -80,10 +128,48 @@ def _normalize_local_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[st
             continue
         defaults = DEFAULT_PREMIUM_THRESHOLDS[asset_group]
         normalized[asset_group] = {
-            "upper": float(values.get("upper", defaults["upper"])),
-            "lower": float(values.get("lower", defaults["lower"])),
-            "upper_enabled": bool(values.get("upper_enabled", defaults["upper_enabled"])),
-            "lower_enabled": bool(values.get("lower_enabled", defaults["lower_enabled"])),
+            "contango_enabled": bool(
+                values.get("contango_enabled", values.get("upper_enabled", defaults["contango_enabled"]))
+            ),
+            "contango_threshold": float(
+                values.get("contango_threshold", values.get("upper", defaults["contango_threshold"]))
+            ),
+            "annualized_contango_enabled": bool(
+                values.get(
+                    "annualized_contango_enabled",
+                    defaults["annualized_contango_enabled"],
+                )
+            ),
+            "annualized_contango_threshold": float(
+                values.get(
+                    "annualized_contango_threshold",
+                    defaults["annualized_contango_threshold"],
+                )
+            ),
+            "backwardation_enabled": bool(
+                values.get(
+                    "backwardation_enabled",
+                    values.get("lower_enabled", defaults["backwardation_enabled"]),
+                )
+            ),
+            "backwardation_threshold": float(
+                values.get(
+                    "backwardation_threshold",
+                    values.get("lower", defaults["backwardation_threshold"]),
+                )
+            ),
+            "annualized_backwardation_enabled": bool(
+                values.get(
+                    "annualized_backwardation_enabled",
+                    defaults["annualized_backwardation_enabled"],
+                )
+            ),
+            "annualized_backwardation_threshold": float(
+                values.get(
+                    "annualized_backwardation_threshold",
+                    defaults["annualized_backwardation_threshold"],
+                )
+            ),
         }
     return normalized
 
@@ -167,7 +253,16 @@ def get_effective_premium_threshold(asset_group: str) -> dict[str, float | bool]
     thresholds = load_premium_thresholds()
     if normalized in thresholds:
         return thresholds[normalized]
-    return {"upper": 0.5, "lower": -0.5, "upper_enabled": True, "lower_enabled": True}
+    return {
+        "contango_enabled": True,
+        "contango_threshold": 0.5,
+        "annualized_contango_enabled": True,
+        "annualized_contango_threshold": 8.0,
+        "backwardation_enabled": True,
+        "backwardation_threshold": -0.5,
+        "annualized_backwardation_enabled": True,
+        "annualized_backwardation_threshold": -8.0,
+    }
 
 
 def get_premium_config_rows() -> list[dict[str, Any]]:
@@ -176,10 +271,22 @@ def get_premium_config_rows() -> list[dict[str, Any]]:
         {
             "asset_group": asset_group,
             "name": PREMIUM_ASSETS[asset_group],
-            "upper": float(thresholds[asset_group]["upper"]),
-            "lower": float(thresholds[asset_group]["lower"]),
-            "upper_enabled": bool(thresholds[asset_group]["upper_enabled"]),
-            "lower_enabled": bool(thresholds[asset_group]["lower_enabled"]),
+            "contango_enabled": bool(thresholds[asset_group]["contango_enabled"]),
+            "contango_threshold": float(thresholds[asset_group]["contango_threshold"]),
+            "annualized_contango_enabled": bool(
+                thresholds[asset_group]["annualized_contango_enabled"]
+            ),
+            "annualized_contango_threshold": float(
+                thresholds[asset_group]["annualized_contango_threshold"]
+            ),
+            "backwardation_enabled": bool(thresholds[asset_group]["backwardation_enabled"]),
+            "backwardation_threshold": float(thresholds[asset_group]["backwardation_threshold"]),
+            "annualized_backwardation_enabled": bool(
+                thresholds[asset_group]["annualized_backwardation_enabled"]
+            ),
+            "annualized_backwardation_threshold": float(
+                thresholds[asset_group]["annualized_backwardation_threshold"]
+            ),
         }
         for asset_group in PREMIUM_ASSETS
     ]

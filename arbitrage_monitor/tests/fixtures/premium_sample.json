@@ -7,6 +7,7 @@
     "future_symbol": "BTC=F",
     "future_name": "BTC期货",
     "future_price": 68025.0,
+    "days_to_maturity": null,
     "source_spot": "fixture",
     "source_future": "fixture"
   },
@@ -18,6 +19,7 @@
     "future_symbol": "CN00Y",
     "future_name": "A50期指当月连续",
     "future_price": 14422.0,
+    "days_to_maturity": 18,
     "source_spot": "fixture",
     "source_future": "fixture"
   },
@@ -29,6 +31,7 @@
     "future_symbol": "CN26K",
     "future_name": "A50期指2605",
     "future_price": 14391.0,
+    "days_to_maturity": 48,
     "source_spot": "fixture",
     "source_future": "fixture"
   },

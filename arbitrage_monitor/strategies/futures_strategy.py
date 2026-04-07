@@ -22,11 +22,17 @@ class FuturesDiscountStrategy(BaseStrategy):
 
         for item in data:
             threshold = get_effective_futures_threshold(item.product_code or item.symbol)
-            percent_threshold = float(threshold["discount_percent_threshold"])
-            annualized_threshold = float(threshold["annualized_discount_threshold"])
-            thresholds_enabled = bool(threshold["enabled"])
-            # 使用合约自身的真实剩余交割天数年化，max(1) 防止除以零（交割当天）
+            backwardation_enabled = bool(threshold["backwardation_enabled"])
+            backwardation_threshold = float(threshold["backwardation_threshold"])
+            annualized_backwardation_threshold = float(
+                threshold["annualized_backwardation_threshold"]
+            )
+            contango_enabled = bool(threshold["contango_enabled"])
+            contango_threshold = float(threshold["contango_threshold"])
+            annualized_contango_threshold = float(threshold["annualized_contango_threshold"])
             annualized_discount = item.discount_rate * (365 / max(item.days_to_maturity, 1))
+            contango_rate = -item.discount_rate
+            annualized_contango = contango_rate * (365 / max(item.days_to_maturity, 1))
 
             logger.debug(
                 "evaluating_futures",
@@ -35,44 +41,84 @@ class FuturesDiscountStrategy(BaseStrategy):
                 annualized=annualized_discount,
             )
 
-            percent_triggered = item.discount_rate >= percent_threshold
-            annualized_triggered = annualized_discount >= annualized_threshold
-            if thresholds_enabled and percent_triggered and annualized_triggered:
+            direction = ""
+            severity_ratio = 0.0
+            msg = ""
+            if (
+                backwardation_enabled
+                and item.discount_rate >= backwardation_threshold
+                and annualized_discount >= annualized_backwardation_threshold
+            ):
+                direction = "贴水"
                 percent_ratio = (
-                    item.discount_rate / percent_threshold
-                    if percent_threshold > 0
+                    item.discount_rate / backwardation_threshold
+                    if backwardation_threshold > 0
                     else 0.0
                 )
                 annualized_ratio = (
-                    annualized_discount / annualized_threshold
-                    if annualized_threshold > 0
+                    annualized_discount / annualized_backwardation_threshold
+                    if annualized_backwardation_threshold > 0
                     else 0.0
                 )
                 severity_ratio = max(percent_ratio, annualized_ratio)
                 msg = (
-                    f"🎯 **期指深度贴水套利机会**\n"
+                    f"期指双阈值触发\n"
                     f"标的：{item.symbol}\n"
+                    f"方向：{direction}\n"
                     f"期指价格：{item.price:.2f}\n"
                     f"现货价格：{item.spot_price:.2f}\n"
-                    f"当前绝对贴水率：{item.discount_rate:.2f}%\n"
-                    f"🔥 **估算年化贴水率：{annualized_discount:.2f}%**\n"
-                    f"触发条件：贴水率和年化贴水率已同时满足阈值\n"
-                    f"贴水率阈值：{percent_threshold:.2f}%\n"
-                    f"年化贴水率阈值：{annualized_threshold:.2f}%"
+                    f"当前贴水率：{item.discount_rate:.2f}%\n"
+                    f"年化贴水率：{annualized_discount:.2f}%\n"
+                    f"触发条件：普通贴水阈值与年化贴水阈值已同时满足\n"
+                    f"普通贴水阈值：{backwardation_threshold:.2f}%\n"
+                    f"年化贴水阈值：{annualized_backwardation_threshold:.2f}%"
                 )
-                if item.margin_ratio > 0:
-                    msg += (
-                        f"\n保证金比例：{item.margin_ratio:.2f}%"
-                        f"\n单手名义本金：{item.notional_per_lot:,.0f}"
-                        f"\n单手保证金占用：{item.margin_required_per_lot:,.0f}"
-                    )
+            elif (
+                contango_enabled
+                and contango_rate >= contango_threshold
+                and annualized_contango >= annualized_contango_threshold
+            ):
+                direction = "升水"
+                percent_ratio = (
+                    contango_rate / contango_threshold
+                    if contango_threshold > 0
+                    else 0.0
+                )
+                annualized_ratio = (
+                    annualized_contango / annualized_contango_threshold
+                    if annualized_contango_threshold > 0
+                    else 0.0
+                )
+                severity_ratio = max(percent_ratio, annualized_ratio)
+                msg = (
+                    f"期指双阈值触发\n"
+                    f"标的：{item.symbol}\n"
+                    f"方向：{direction}\n"
+                    f"期指价格：{item.price:.2f}\n"
+                    f"现货价格：{item.spot_price:.2f}\n"
+                    f"当前升水率：{contango_rate:.2f}%\n"
+                    f"年化升水率：{annualized_contango:.2f}%\n"
+                    f"触发条件：普通升水阈值与年化升水阈值已同时满足\n"
+                    f"普通升水阈值：{contango_threshold:.2f}%\n"
+                    f"年化升水阈值：{annualized_contango_threshold:.2f}%"
+                )
 
-                signal = Signal(
-                    asset=item.symbol,
-                    strategy_name=self.name,
-                    level="WARNING" if severity_ratio < 1.5 else "CRITICAL",
-                    message=msg,
+            if not msg:
+                continue
+
+            if item.margin_ratio > 0:
+                msg += (
+                    f"\n保证金比例：{item.margin_ratio:.2f}%"
+                    f"\n单手名义本金：{item.notional_per_lot:,.0f}"
+                    f"\n单手保证金占用：{item.margin_required_per_lot:,.0f}"
                 )
-                signals.append(signal)
+
+            signal = Signal(
+                asset=item.symbol,
+                strategy_name=self.name,
+                level="WARNING" if severity_ratio < 1.5 else "CRITICAL",
+                message=msg,
+            )
+            signals.append(signal)
 
         return signals

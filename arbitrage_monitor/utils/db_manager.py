@@ -124,6 +124,7 @@ class DBManager:
                     premium REAL NOT NULL,
                     premium_rate REAL NOT NULL,
                     state TEXT NOT NULL,
+                    days_to_maturity INTEGER,
                     source_spot TEXT DEFAULT '',
                     source_future TEXT DEFAULT '',
                     fetched_at TEXT NOT NULL
@@ -182,6 +183,16 @@ class DBManager:
                 '''
             )
             conn.commit()
+            self._ensure_column(conn, "premium_arbitrage_snapshot", "days_to_maturity", "INTEGER")
+
+    def _ensure_column(self, conn, table: str, column: str, definition: str) -> None:
+        columns = {
+            row[1]
+            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            conn.commit()
 
     @contextmanager
     def get_connection(self):
@@ -226,6 +237,7 @@ class DBManager:
             "premium": float(snapshot.premium),
             "premium_rate": float(snapshot.premium_rate),
             "state": snapshot.state,
+            "days_to_maturity": snapshot.days_to_maturity,
         }
 
     def _get_latest_futures_snapshot_rows(self, conn, symbols: list[str]) -> dict[str, dict]:
@@ -299,7 +311,7 @@ class DBManager:
         rows = conn.execute(
             f"""
             SELECT p.id, p.symbol, p.spot_price, p.future_price, p.premium, p.premium_rate,
-                   p.state, p.fetched_at
+                   p.state, p.days_to_maturity, p.fetched_at
             FROM premium_arbitrage_snapshot p
             INNER JOIN (
                 SELECT symbol, MAX(id) AS max_id
@@ -320,7 +332,8 @@ class DBManager:
                 "premium": float(row[4]),
                 "premium_rate": float(row[5]),
                 "state": str(row[6]),
-                "fetched_at": datetime.fromisoformat(row[7]),
+                "days_to_maturity": int(row[7]) if row[7] is not None else None,
+                "fetched_at": datetime.fromisoformat(row[8]),
             }
         return result
 
@@ -376,6 +389,7 @@ class DBManager:
                 float(snapshot.premium) != latest["premium"],
                 float(snapshot.premium_rate) != latest["premium_rate"],
                 snapshot.state != latest["state"],
+                snapshot.days_to_maturity != latest["days_to_maturity"],
             )
         )
         if self._same_minute(current_ts, latest_ts):
@@ -601,6 +615,7 @@ class DBManager:
                         snapshot.premium,
                         snapshot.premium_rate,
                         snapshot.state,
+                        snapshot.days_to_maturity,
                         snapshot.source_spot,
                         snapshot.source_future,
                         snapshot.timestamp.isoformat(),
@@ -611,7 +626,7 @@ class DBManager:
                             UPDATE premium_arbitrage_snapshot
                             SET asset_group = ?, spot_symbol = ?, spot_name = ?, spot_price = ?,
                                 future_symbol = ?, future_name = ?, future_price = ?, premium = ?,
-                                premium_rate = ?, state = ?, source_spot = ?, source_future = ?, fetched_at = ?
+                                premium_rate = ?, state = ?, days_to_maturity = ?, source_spot = ?, source_future = ?, fetched_at = ?
                             WHERE id = ?
                             """,
                             row[1:] + (latest["id"],),
@@ -621,9 +636,9 @@ class DBManager:
                             """
                             INSERT INTO premium_arbitrage_snapshot
                             (symbol, asset_group, spot_symbol, spot_name, spot_price, future_symbol,
-                             future_name, future_price, premium, premium_rate, state, source_spot,
+                             future_name, future_price, premium, premium_rate, state, days_to_maturity, source_spot,
                              source_future, fetched_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             row,
                         )

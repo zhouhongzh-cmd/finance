@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime
+from calendar import monthrange
 from typing import Any
 
 import akshare as ak
@@ -17,6 +18,22 @@ from utils.source_health import source_health_context
 
 class PremiumFetcher:
     """BTC 与 A50 期现溢价抓取器。"""
+
+    A50_MONTH_CODES = {
+        "F": 1,
+        "G": 2,
+        "H": 3,
+        "J": 4,
+        "K": 5,
+        "M": 6,
+        "N": 7,
+        "Q": 8,
+        "U": 9,
+        "V": 10,
+        "X": 11,
+        "Z": 12,
+        "Y": None,
+    }
 
     def _fetch_yfinance_price(self, symbol: str, source_name: str) -> tuple[float | None, str]:
         price = None
@@ -49,6 +66,31 @@ class PremiumFetcher:
             logger.warning("premium_yfinance_fetch_failed", symbol=symbol, error=str(exc))
         return None, source
 
+    def _fetch_btc_future_price(self) -> tuple[float | None, str, str, str]:
+        try:
+            with source_health_context("premium_btc_future_akshare"):
+                df = ak.futures_foreign_commodity_realtime(symbol="BTC")
+            if df is not None and not df.empty:
+                row = df.iloc[0]
+                raw_price = row.get("最新价")
+                if raw_price is not None and not pd.isna(raw_price):
+                    future_name = str(row.get("名称") or "CME比特币期货").strip()
+                    return (
+                        float(raw_price),
+                        "akshare.futures_foreign_commodity_realtime",
+                        "BTC",
+                        future_name or "CME比特币期货",
+                    )
+        except Exception as exc:
+            logger.warning("premium_btc_future_akshare_failed", error=str(exc))
+
+        fallback_price, fallback_source = self._fetch_yfinance_price(
+            "BTC=F", "premium_btc_future_yfinance"
+        )
+        if fallback_price is not None:
+            return fallback_price, fallback_source, "BTC=F", "BTC期货"
+        return None, "", "", ""
+
     def _build_snapshot(
         self,
         *,
@@ -59,6 +101,7 @@ class PremiumFetcher:
         future_symbol: str,
         future_name: str,
         future_price: float,
+        days_to_maturity: int | None,
         source_spot: str,
         source_future: str,
     ) -> PremiumArbitrageData:
@@ -78,9 +121,32 @@ class PremiumFetcher:
             premium=premium,
             premium_rate=premium_rate,
             state=state,
+            days_to_maturity=days_to_maturity,
             source_spot=source_spot,
             source_future=source_future,
         )
+
+    def _estimate_days_to_maturity(self, future_symbol: str) -> int | None:
+        code = (future_symbol or "").strip().upper()
+        if not code.startswith("CN") or len(code) < 4:
+            return None
+
+        suffix = code[-1]
+        month = self.A50_MONTH_CODES.get(suffix)
+        now = datetime.now()
+        if suffix == "Y":
+            month = now.month
+            year = now.year
+        else:
+            year_fragment = code[-3:-1]
+            if not year_fragment.isdigit() or month is None:
+                return None
+            year = 2000 + int(year_fragment)
+
+        last_day = monthrange(year, month)[1]
+        expiry_date = datetime(year, month, last_day)
+        delta = (expiry_date.date() - now.date()).days
+        return max(delta, 0)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=8))
     def fetch_live(self) -> list[PremiumArbitrageData]:
@@ -90,9 +156,7 @@ class PremiumFetcher:
         btc_spot, btc_spot_source = self._fetch_yfinance_price(
             "BTC-USD", "premium_btc_spot_yfinance"
         )
-        btc_future, btc_future_source = self._fetch_yfinance_price(
-            "BTC=F", "premium_btc_future_yfinance"
-        )
+        btc_future, btc_future_source, btc_future_symbol, btc_future_name = self._fetch_btc_future_price()
         if btc_spot is not None and btc_future is not None:
             results.append(
                 self._build_snapshot(
@@ -100,9 +164,10 @@ class PremiumFetcher:
                     spot_symbol="BTC-USD",
                     spot_name="BTC现货",
                     spot_price=btc_spot,
-                    future_symbol="BTC=F",
-                    future_name="BTC期货",
+                    future_symbol=btc_future_symbol or "BTC=F",
+                    future_name=btc_future_name or "BTC期货",
                     future_price=btc_future,
+                    days_to_maturity=None,
                     source_spot=btc_spot_source,
                     source_future=btc_future_source,
                 )
@@ -137,6 +202,7 @@ class PremiumFetcher:
                     future_name = str(row.get("名称") or row.get("name") or future_symbol).strip()
                     if not future_symbol:
                         future_symbol = future_name
+                    days_to_maturity = self._estimate_days_to_maturity(future_symbol)
                     results.append(
                         self._build_snapshot(
                             asset_group="A50",
@@ -146,6 +212,7 @@ class PremiumFetcher:
                             future_symbol=future_symbol,
                             future_name=future_name,
                             future_price=future_price,
+                            days_to_maturity=days_to_maturity,
                             source_spot=a50_spot_source,
                             source_future="akshare.futures_global_spot_em",
                         )
@@ -181,6 +248,7 @@ class PremiumFetcher:
                     future_symbol=item["future_symbol"],
                     future_name=item.get("future_name", item["future_symbol"]),
                     future_price=float(future_price),
+                    days_to_maturity=item.get("days_to_maturity"),
                     source_spot=item.get("source_spot", "fixture"),
                     source_future=item.get("source_future", "fixture"),
                 )

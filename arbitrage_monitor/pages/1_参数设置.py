@@ -222,6 +222,12 @@ def render_time_window(prefix: str, values: dict[str, object]) -> dict[str, str]
     }
 
 
+def render_threshold_header(widths: list[float], labels: list[str]) -> None:
+    header_cols = st.columns(widths)
+    for col, label in zip(header_cols, labels):
+        col.markdown(f"**{label}**")
+
+
 def save_runtime_module(updates: dict[str, object], tracked_fields: list[str], *, success_text: str) -> None:
     previous = {field: current[field] for field in tracked_fields}
     config_path = write_env_updates(updates)
@@ -268,40 +274,95 @@ with st.expander("股指期货", expanded=True):
         futures_windows = render_time_window("FUTURES", current)
 
         st.markdown("**分品种阈值**")
-        st.write("品种 | 名称 | 启用预警 | 贴水率阈值(%) | 年化贴水率阈值(%)")
+        futures_threshold_widths = [0.8, 1.2, 0.8, 1, 0.8, 1.1, 0.8, 1, 0.8, 1.1]
+        render_threshold_header(
+            futures_threshold_widths,
+            [
+                "品种",
+                "名称",
+                "升水启用",
+                "升水阈值(%)",
+                "年化升水启用",
+                "年化升水阈值(%)",
+                "贴水启用",
+                "贴水阈值(%)",
+                "年化贴水启用",
+                "年化贴水阈值(%)",
+            ],
+        )
         futures_threshold_updates: dict[str, dict[str, float | bool]] = {}
         for row in futures_rows:
-            cols = st.columns([0.8, 1.2, 0.9, 1.2, 1.4])
+            cols = st.columns(futures_threshold_widths)
             cols[0].markdown(f"`{row['product_code']}`")
             cols[1].markdown(row["name"])
-            enabled = cols[2].checkbox(
-                f"{row['product_code']}_enabled",
-                value=bool(row["enabled"]),
+            contango_enabled = cols[2].checkbox(
+                f"{row['product_code']}_contango_enabled",
+                value=bool(row["contango_enabled"]),
                 label_visibility="collapsed",
-                key=f"futures_threshold_enabled_{row['product_code']}",
+                key=f"futures_threshold_contango_enabled_{row['product_code']}",
             )
-            percent_threshold = cols[3].number_input(
-                f"{row['product_code']}_discount_percent",
+            contango_threshold = cols[3].number_input(
+                f"{row['product_code']}_contango_threshold",
                 min_value=0.0,
                 max_value=1000.0,
-                value=float(row["discount_percent_threshold"]),
+                value=float(row["contango_threshold"]),
                 step=0.1,
                 label_visibility="collapsed",
-                key=f"futures_threshold_percent_{row['product_code']}",
+                key=f"futures_threshold_contango_{row['product_code']}",
             )
-            annualized_threshold = cols[4].number_input(
-                f"{row['product_code']}_annualized_discount",
+            annualized_contango_enabled = cols[4].checkbox(
+                f"{row['product_code']}_annualized_contango_enabled",
+                value=bool(row.get("annualized_contango_enabled", True)),
+                label_visibility="collapsed",
+                key=f"futures_threshold_annualized_contango_enabled_{row['product_code']}",
+            )
+            annualized_contango_threshold = cols[5].number_input(
+                f"{row['product_code']}_annualized_contango",
                 min_value=0.0,
                 max_value=1000.0,
-                value=float(row["annualized_discount_threshold"]),
+                value=float(row["annualized_contango_threshold"]),
                 step=0.5,
                 label_visibility="collapsed",
-                key=f"futures_threshold_annualized_{row['product_code']}",
+                key=f"futures_threshold_annualized_contango_{row['product_code']}",
+            )
+            backwardation_enabled = cols[6].checkbox(
+                f"{row['product_code']}_backwardation_enabled",
+                value=bool(row["backwardation_enabled"]),
+                label_visibility="collapsed",
+                key=f"futures_threshold_backwardation_enabled_{row['product_code']}",
+            )
+            backwardation_threshold = cols[7].number_input(
+                f"{row['product_code']}_backwardation_threshold",
+                min_value=0.0,
+                max_value=1000.0,
+                value=float(row["backwardation_threshold"]),
+                step=0.1,
+                label_visibility="collapsed",
+                key=f"futures_threshold_backwardation_{row['product_code']}",
+            )
+            annualized_backwardation_enabled = cols[8].checkbox(
+                f"{row['product_code']}_annualized_backwardation_enabled",
+                value=bool(row.get("annualized_backwardation_enabled", True)),
+                label_visibility="collapsed",
+                key=f"futures_threshold_annualized_backwardation_enabled_{row['product_code']}",
+            )
+            annualized_backwardation_threshold = cols[9].number_input(
+                f"{row['product_code']}_annualized_backwardation",
+                min_value=0.0,
+                max_value=1000.0,
+                value=float(row["annualized_backwardation_threshold"]),
+                step=0.5,
+                label_visibility="collapsed",
+                key=f"futures_threshold_annualized_backwardation_{row['product_code']}",
             )
             futures_threshold_updates[row["product_code"]] = {
-                "enabled": bool(enabled),
-                "discount_percent_threshold": float(percent_threshold),
-                "annualized_discount_threshold": float(annualized_threshold),
+                "backwardation_enabled": bool(backwardation_enabled),
+                "backwardation_threshold": float(backwardation_threshold),
+                "annualized_backwardation_enabled": bool(annualized_backwardation_enabled),
+                "annualized_backwardation_threshold": float(annualized_backwardation_threshold),
+                "contango_enabled": bool(contango_enabled),
+                "contango_threshold": float(contango_threshold),
+                "annualized_contango_threshold": float(annualized_contango_threshold),
             }
 
         save_futures = st.form_submit_button("保存股指期货设置", use_container_width=True)
@@ -348,14 +409,14 @@ with st.expander("股指期货", expanded=True):
     render_history_table(prefixes=("ENABLE_FUTURES_", "FUTURES_", "FUTURES_THRESHOLD."))
 
 
-with st.expander("期现溢价", expanded=False):
-    st.caption("BTC 与 A50 的监控开关、时钟和分资产上下阈值都在这里。")
+with st.expander("A50 以及加密货币", expanded=False):
+    st.caption("A50 多合约与 BTC 单合约的监控开关、时钟和双向年化阈值都在这里。")
     premium_rows = get_premium_config_rows()
     premium_before = flatten_premium_threshold_values(premium_rows)
     with st.form("premium_module_form"):
         st.markdown("**模块开关**")
         col1, col2, col3 = st.columns(3)
-        enable_premium = col1.toggle("启用期现溢价监控", value=current["ENABLE_PREMIUM_MONITOR"])
+        enable_premium = col1.toggle("启用 A50 与加密货币监控", value=current["ENABLE_PREMIUM_MONITOR"])
         enable_premium_cruise = col2.checkbox("启用巡航", value=current["ENABLE_PREMIUM_CRUISE"])
         enable_premium_watch = col3.checkbox("启用盯盘", value=current["ENABLE_PREMIUM_WATCH"])
 
@@ -379,49 +440,92 @@ with st.expander("期现溢价", expanded=False):
         premium_windows = render_time_window("PREMIUM", current)
 
         st.markdown("**分资产阈值**")
-        st.write("资产组 | 名称 | 上阈值启用 | 上阈值(%) | 下阈值启用 | 下阈值(%)")
+        premium_threshold_widths = [0.8, 1.2, 0.8, 1, 0.8, 1.1, 0.8, 1, 0.8, 1.1]
+        render_threshold_header(
+            premium_threshold_widths,
+            [
+                "资产组",
+                "名称",
+                "升水启用",
+                "升水阈值(%)",
+                "年化升水启用",
+                "年化升水阈值(%)",
+                "贴水启用",
+                "贴水阈值(%)",
+                "年化贴水启用",
+                "年化贴水阈值(%)",
+            ],
+        )
         premium_threshold_updates: dict[str, dict[str, float | bool]] = {}
         for row in premium_rows:
-            cols = st.columns([0.8, 1.2, 0.8, 1, 0.8, 1])
+            cols = st.columns(premium_threshold_widths)
             cols[0].markdown(f"`{row['asset_group']}`")
             cols[1].markdown(row["name"])
-            upper_enabled = cols[2].checkbox(
-                f"{row['asset_group']}_upper_enabled",
-                value=bool(row.get("upper_enabled", True)),
+            contango_enabled = cols[2].checkbox(
+                f"{row['asset_group']}_contango_enabled",
+                value=bool(row.get("contango_enabled", True)),
                 label_visibility="collapsed",
-                key=f"premium_upper_enabled_{row['asset_group']}",
+                key=f"premium_contango_enabled_{row['asset_group']}",
             )
-            upper = cols[3].number_input(
-                f"{row['asset_group']}_upper",
-                value=float(row["upper"]),
+            contango_threshold = cols[3].number_input(
+                f"{row['asset_group']}_contango",
+                value=float(row["contango_threshold"]),
                 step=0.1,
                 label_visibility="collapsed",
-                key=f"premium_upper_{row['asset_group']}",
-                disabled=not upper_enabled,
+                key=f"premium_contango_{row['asset_group']}",
             )
-            lower_enabled = cols[4].checkbox(
-                f"{row['asset_group']}_lower_enabled",
-                value=bool(row.get("lower_enabled", True)),
+            annualized_contango_enabled = cols[4].checkbox(
+                f"{row['asset_group']}_annualized_contango_enabled",
+                value=bool(row.get("annualized_contango_enabled", True)),
                 label_visibility="collapsed",
-                key=f"premium_lower_enabled_{row['asset_group']}",
+                key=f"premium_annualized_contango_enabled_{row['asset_group']}",
             )
-            lower = cols[5].number_input(
-                f"{row['asset_group']}_lower",
-                value=float(row["lower"]),
+            annualized_contango_threshold = cols[5].number_input(
+                f"{row['asset_group']}_annualized_contango",
+                value=float(row["annualized_contango_threshold"]),
                 step=0.1,
                 label_visibility="collapsed",
-                key=f"premium_lower_{row['asset_group']}",
-                disabled=not lower_enabled,
+                key=f"premium_annualized_contango_{row['asset_group']}",
+            )
+            backwardation_enabled = cols[6].checkbox(
+                f"{row['asset_group']}_backwardation_enabled",
+                value=bool(row.get("backwardation_enabled", True)),
+                label_visibility="collapsed",
+                key=f"premium_backwardation_enabled_{row['asset_group']}",
+            )
+            backwardation_threshold = cols[7].number_input(
+                f"{row['asset_group']}_backwardation",
+                value=float(row["backwardation_threshold"]),
+                step=0.1,
+                label_visibility="collapsed",
+                key=f"premium_backwardation_{row['asset_group']}",
+            )
+            annualized_backwardation_enabled = cols[8].checkbox(
+                f"{row['asset_group']}_annualized_backwardation_enabled",
+                value=bool(row.get("annualized_backwardation_enabled", True)),
+                label_visibility="collapsed",
+                key=f"premium_annualized_backwardation_enabled_{row['asset_group']}",
+            )
+            annualized_backwardation_threshold = cols[9].number_input(
+                f"{row['asset_group']}_annualized_backwardation",
+                value=float(row["annualized_backwardation_threshold"]),
+                step=0.1,
+                label_visibility="collapsed",
+                key=f"premium_annualized_backwardation_{row['asset_group']}",
             )
             premium_threshold_updates[row["asset_group"]] = {
-                "upper": float(upper),
-                "lower": float(lower),
-                "upper_enabled": bool(upper_enabled),
-                "lower_enabled": bool(lower_enabled),
+                "contango_enabled": bool(contango_enabled),
+                "contango_threshold": float(contango_threshold),
+                "annualized_contango_enabled": bool(annualized_contango_enabled),
+                "annualized_contango_threshold": float(annualized_contango_threshold),
+                "backwardation_enabled": bool(backwardation_enabled),
+                "backwardation_threshold": float(backwardation_threshold),
+                "annualized_backwardation_enabled": bool(annualized_backwardation_enabled),
+                "annualized_backwardation_threshold": float(annualized_backwardation_threshold),
             }
 
-        save_premium = st.form_submit_button("保存期现溢价设置", use_container_width=True)
-        reset_premium = st.form_submit_button("恢复期现溢价默认值")
+        save_premium = st.form_submit_button("保存 A50 与加密货币设置", use_container_width=True)
+        reset_premium = st.form_submit_button("恢复 A50 与加密货币默认值")
 
     if save_premium:
         premium_runtime_updates = {
@@ -433,7 +537,7 @@ with st.expander("期现溢价", expanded=False):
         }
         premium_runtime_updates.update(premium_windows)
         try:
-            save_runtime_module(premium_runtime_updates, PREMIUM_RUNTIME_FIELDS, success_text="期现溢价运行配置")
+            save_runtime_module(premium_runtime_updates, PREMIUM_RUNTIME_FIELDS, success_text="A50 与加密货币运行配置")
             path = save_premium_thresholds(premium_threshold_updates)
             after_rows = get_premium_config_rows()
             record_config_changes(
@@ -442,9 +546,9 @@ with st.expander("期现溢价", expanded=False):
                 source="dashboard_gui",
                 destination="local_override" if path.name.endswith(".local.json") else "shared_baseline",
             )
-            st.success(f"期现溢价阈值已保存到 {path.name}。")
+            st.success(f"A50 与加密货币阈值已保存到 {path.name}。")
         except Exception as exc:
-            st.error(f"保存期现溢价设置失败：{exc}")
+            st.error(f"保存 A50 与加密货币设置失败：{exc}")
 
     if reset_premium:
         try:
@@ -456,9 +560,9 @@ with st.expander("期现溢价", expanded=False):
                 source="dashboard_gui",
                 destination="shared_baseline",
             )
-            st.success(f"期现溢价阈值已恢复为共享基线，当前使用 {path.name}。")
+            st.success(f"A50 与加密货币阈值已恢复为共享基线，当前使用 {path.name}。")
         except Exception as exc:
-            st.error(f"恢复期现溢价阈值失败：{exc}")
+            st.error(f"恢复 A50 与加密货币阈值失败：{exc}")
 
     st.markdown("**最近变更**")
     render_history_table(prefixes=("ENABLE_PREMIUM_", "PREMIUM_", "PREMIUM_THRESHOLD."))

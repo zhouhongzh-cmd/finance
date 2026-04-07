@@ -268,9 +268,12 @@ def test_futures_dual_threshold_trigger():
             json.dumps(
                 {
                     product: {
-                        "enabled": True,
-                        "discount_percent_threshold": 1.0,
-                        "annualized_discount_threshold": 20.0,
+                        "backwardation_enabled": True,
+                        "backwardation_threshold": 1.0,
+                        "annualized_backwardation_threshold": 20.0,
+                        "contango_enabled": True,
+                        "contango_threshold": 1.0,
+                        "annualized_contango_threshold": 20.0,
                     }
                     for product in ("IH", "IF", "IC", "IM")
                 },
@@ -355,10 +358,10 @@ def test_futures_dual_threshold_trigger():
     if len(both_triggered) != 1:
         print(f"❌ Futures Dual Threshold: expected dual trigger, got {len(both_triggered)}")
         return False
-    if "同时满足阈值" not in both_triggered[0].message:
+    if "同时满足" not in both_triggered[0].message:
         print("❌ Futures Dual Threshold: signal message missing dual-threshold wording")
         return False
-    if "贴水率阈值" not in both_triggered[0].message or "年化贴水率阈值" not in both_triggered[0].message:
+    if "普通贴水阈值" not in both_triggered[0].message or "年化贴水阈值" not in both_triggered[0].message:
         print("❌ Futures Dual Threshold: signal message missing threshold detail")
         return False
 
@@ -547,9 +550,12 @@ def test_threshold_enable_switches():
             json.dumps(
                 {
                     product: {
-                        "enabled": False,
-                        "discount_percent_threshold": 1.0,
-                        "annualized_discount_threshold": 8.0,
+                        "backwardation_enabled": False,
+                        "backwardation_threshold": 1.0,
+                        "annualized_backwardation_threshold": 8.0,
+                        "contango_enabled": False,
+                        "contango_threshold": 1.0,
+                        "annualized_contango_threshold": 8.0,
                     }
                     for product in ("IH", "IF", "IC", "IM")
                 },
@@ -744,7 +750,7 @@ def test_snapshot_deduplication():
     db.save_metal_snapshots([metal_b])
 
     premium_a = PremiumArbitrageData(
-        symbol="BTC:BTC=F",
+        symbol="DEDUP_BTC:BTC=F",
         timestamp=base_ts,
         asset_group="BTC",
         spot_symbol="BTC-USD",
@@ -760,7 +766,7 @@ def test_snapshot_deduplication():
         source_future="fixture",
     )
     premium_b = PremiumArbitrageData(
-        symbol="BTC:BTC=F",
+        symbol="DEDUP_BTC:BTC=F",
         timestamp=later_same_minute,
         asset_group="BTC",
         spot_symbol="BTC-USD",
@@ -786,11 +792,11 @@ def test_snapshot_deduplication():
             "SELECT COUNT(*), MAX(dom_price), MAX(spread_pct) FROM metal_arbitrage_snapshot WHERE symbol = 'DEDUP_AU:GC'"
         ).fetchone()
         premium_rows = conn.execute(
-            "SELECT COUNT(*), MAX(future_price), MAX(premium_rate) FROM premium_arbitrage_snapshot WHERE symbol = 'BTC:BTC=F'"
+            "SELECT COUNT(*), MAX(future_price), MAX(premium_rate) FROM premium_arbitrage_snapshot WHERE symbol = 'DEDUP_BTC:BTC=F'"
         ).fetchone()
         conn.execute("DELETE FROM futures_live_snapshot WHERE symbol = 'DEDUP_IF'")
         conn.execute("DELETE FROM metal_arbitrage_snapshot WHERE symbol = 'DEDUP_AU:GC'")
-        conn.execute("DELETE FROM premium_arbitrage_snapshot WHERE symbol = 'BTC:BTC=F'")
+        conn.execute("DELETE FROM premium_arbitrage_snapshot WHERE symbol = 'DEDUP_BTC:BTC=F'")
         conn.commit()
 
     if futures_rows[0] != 1 or float(futures_rows[1]) != 3501 or float(futures_rows[2]) != 1.1:
@@ -1687,24 +1693,36 @@ def test_futures_threshold_local_override():
             json.dumps(
                 {
                     "IH": {
-                        "enabled": False,
-                        "discount_percent_threshold": 1.0,
-                        "annualized_discount_threshold": 8.0,
+                        "backwardation_enabled": False,
+                        "backwardation_threshold": 1.0,
+                        "annualized_backwardation_threshold": 8.0,
+                        "contango_enabled": False,
+                        "contango_threshold": 1.0,
+                        "annualized_contango_threshold": 8.0,
                     },
                     "IF": {
-                        "enabled": True,
-                        "discount_percent_threshold": 1.2,
-                        "annualized_discount_threshold": 8.5,
+                        "backwardation_enabled": True,
+                        "backwardation_threshold": 1.2,
+                        "annualized_backwardation_threshold": 8.5,
+                        "contango_enabled": True,
+                        "contango_threshold": 1.2,
+                        "annualized_contango_threshold": 8.5,
                     },
                     "IC": {
-                        "enabled": True,
-                        "discount_percent_threshold": 1.3,
-                        "annualized_discount_threshold": 9.0,
+                        "backwardation_enabled": True,
+                        "backwardation_threshold": 1.3,
+                        "annualized_backwardation_threshold": 9.0,
+                        "contango_enabled": True,
+                        "contango_threshold": 1.3,
+                        "annualized_contango_threshold": 9.0,
                     },
                     "IM": {
-                        "enabled": True,
-                        "discount_percent_threshold": 1.4,
-                        "annualized_discount_threshold": 9.5,
+                        "backwardation_enabled": True,
+                        "backwardation_threshold": 1.4,
+                        "annualized_backwardation_threshold": 9.5,
+                        "contango_enabled": True,
+                        "contango_threshold": 1.4,
+                        "annualized_contango_threshold": 9.5,
                     },
                 },
                 ensure_ascii=False,
@@ -1717,9 +1735,12 @@ def test_futures_threshold_local_override():
             json.dumps(
                 {
                     "IF": {
-                        "enabled": False,
-                        "discount_percent_threshold": 2.2,
-                        "annualized_discount_threshold": 12.5,
+                        "backwardation_enabled": False,
+                        "backwardation_threshold": 2.2,
+                        "annualized_backwardation_threshold": 12.5,
+                        "contango_enabled": False,
+                        "contango_threshold": 2.2,
+                        "annualized_contango_threshold": 12.5,
                     }
                 },
                 ensure_ascii=False,
@@ -1740,13 +1761,13 @@ def test_futures_threshold_local_override():
             futures_config.get_local_futures_thresholds_path = original_local_path_fn
             futures_config._threshold_cache = original_cache
 
-    if effective["IF"]["enabled"] is not False:
+    if effective["IF"]["backwardation_enabled"] is not False:
         print("❌ Futures Threshold Local Override: local enabled override not applied")
         return False
-    if float(effective["IF"]["discount_percent_threshold"]) != 2.2:
+    if float(effective["IF"]["backwardation_threshold"]) != 2.2:
         print("❌ Futures Threshold Local Override: local percent threshold not applied")
         return False
-    if float(effective["IH"]["annualized_discount_threshold"]) != 8.0:
+    if float(effective["IH"]["annualized_backwardation_threshold"]) != 8.0:
         print("❌ Futures Threshold Local Override: shared value should remain when local missing")
         return False
 
@@ -2133,9 +2154,12 @@ def test_full_pipeline():
             json.dumps(
                 {
                     product: {
-                        "enabled": True,
-                        "discount_percent_threshold": 0.2,
-                        "annualized_discount_threshold": 3.0,
+                        "backwardation_enabled": True,
+                        "backwardation_threshold": 0.2,
+                        "annualized_backwardation_threshold": 3.0,
+                        "contango_enabled": True,
+                        "contango_threshold": 0.2,
+                        "annualized_contango_threshold": 3.0,
                     }
                     for product in ("IH", "IF", "IC", "IM")
                 },
@@ -2506,8 +2530,18 @@ def test_premium_threshold_local_override():
         shared_path.write_text(
             json.dumps(
                 {
-                    "BTC": {"upper": 0.5, "lower": -0.5, "upper_enabled": True, "lower_enabled": True},
-                    "A50": {"upper": 0.5, "lower": -0.5, "upper_enabled": True, "lower_enabled": True},
+                    "BTC": {
+                        "contango_threshold": 0.5,
+                        "backwardation_threshold": -0.5,
+                        "contango_enabled": True,
+                        "backwardation_enabled": True,
+                    },
+                    "A50": {
+                        "contango_threshold": 0.5,
+                        "backwardation_threshold": -0.5,
+                        "contango_enabled": True,
+                        "backwardation_enabled": True,
+                    },
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -2518,7 +2552,12 @@ def test_premium_threshold_local_override():
         local_path.write_text(
             json.dumps(
                 {
-                    "BTC": {"upper": 1.2, "lower": -1.0, "upper_enabled": True, "lower_enabled": False}
+                    "BTC": {
+                        "contango_threshold": 1.2,
+                        "backwardation_threshold": -1.0,
+                        "contango_enabled": True,
+                        "backwardation_enabled": False,
+                    }
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -2538,10 +2577,10 @@ def test_premium_threshold_local_override():
             premium_config.get_local_premium_thresholds_path = original_local_path_fn
             premium_config._threshold_cache = original_cache
 
-    if float(btc["upper"]) != 1.2 or bool(btc["lower_enabled"]) is not False:
+    if float(btc["contango_threshold"]) != 1.2 or bool(btc["backwardation_enabled"]) is not False:
         print(f"❌ Premium Threshold Override: BTC override mismatch {btc}")
         return False
-    if float(a50["upper"]) != 0.5 or float(a50["lower"]) != -0.5:
+    if float(a50["contango_threshold"]) != 0.5 or float(a50["backwardation_threshold"]) != -0.5:
         print(f"❌ Premium Threshold Override: A50 shared fallback mismatch {a50}")
         return False
 

@@ -226,7 +226,7 @@ def fetch_recent_premium_snapshot_history(limit: int = 200) -> pd.DataFrame:
             """
             SELECT fetched_at, asset_group, spot_symbol, spot_name, spot_price,
                    future_symbol, future_name, future_price, premium, premium_rate,
-                   state, source_spot, source_future
+                   state, days_to_maturity, source_spot, source_future
             FROM premium_arbitrage_snapshot
             ORDER BY id DESC
             LIMIT ?
@@ -473,11 +473,11 @@ sidebar.metric("数据库大小", f"{stats['db_size_kb']} KB")
 sidebar.info(f"更新时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 if hasattr(st, "page_link"):
     sidebar.page_link("pages/1_参数设置.py", label="打开参数设置", icon="⚙️")
-sidebar.caption("金属阈值和模块时钟在“参数设置”页。")
+sidebar.caption("各模块阈值与时钟都在“参数设置”页。")
 
 view = st.radio(
     "模块",
-    ["中金所股指", "可转债", "舆情热度", "金属套利", "期现溢价", "报警记录", "系统状态", "软件说明"],
+    ["中金所股指", "可转债", "舆情热度", "金属套利", "A50 以及加密货币", "报警记录", "系统状态", "软件说明"],
     horizontal=True,
     label_visibility="collapsed",
 )
@@ -626,18 +626,19 @@ elif view == "金属套利":
         )
         st.dataframe(history_df, width="stretch", hide_index=True)
 
-elif view == "期现溢价":
+elif view == "A50 以及加密货币":
     left, right = st.columns([1, 5])
     refresh_now = False
     with left:
         refresh_now = st.button("刷新", key="refresh_premium")
     with right:
-        st.markdown("#### BTC + A50 期现溢价数据")
+        st.markdown("#### A50 以及加密货币")
 
     if hasattr(st, "page_link"):
-        st.page_link("pages/1_参数设置.py", label="去调整期现溢价阈值和模块时钟", icon="⚙️")
+        st.page_link("pages/1_参数设置.py", label="去调整 A50 与加密货币阈值和模块时钟", icon="⚙️")
+    st.caption("当前只有 A50 支持多合约列表；BTC 仍是单合约期现监控，后续如需多到期合约需要接入新的稳定数据源。")
 
-    with st.spinner("加载期现溢价实时数据..."):
+    with st.spinner("加载 A50 与加密货币实时数据..."):
         premium_df, premium_signal_df, premium_fetched_at = load_live_data(
             "premium_live", fetch_premium_live_view, refresh=refresh_now
         )
@@ -659,7 +660,7 @@ elif view == "期现溢价":
 
     st.markdown("#### 当前触发信号")
     if premium_signal_df.empty:
-        st.info("当前无期现溢价触发信号")
+        st.info("当前无 A50 或加密货币触发信号")
     else:
         st.dataframe(premium_signal_df, width="stretch", hide_index=True)
 
@@ -667,8 +668,18 @@ elif view == "期现溢价":
     history_limit = st.slider("历史快照条数", 20, 500, 100, 20, key="premium_history_limit")
     history_df = fetch_recent_premium_snapshot_history(limit=history_limit)
     if history_df.empty:
-        st.info("暂无期现溢价快照历史")
+        st.info("暂无 A50 与加密货币快照历史")
     else:
+        if "days_to_maturity" in history_df.columns:
+            annualized_series = history_df.apply(
+                lambda row: (
+                    round(row["premium_rate"] * (365 / max(int(row["days_to_maturity"]), 1)), 4)
+                    if pd.notna(row["days_to_maturity"])
+                    else "N/A"
+                ),
+                axis=1,
+            )
+            history_df["annualized_premium_rate"] = annualized_series
         history_df["fetched_at"] = history_df["fetched_at"].dt.strftime("%Y-%m-%d %H:%M:%S")
         st.dataframe(history_df, width="stretch", hide_index=True)
 
@@ -770,7 +781,7 @@ elif view == "软件说明":
 - `可转债`：展示实时转债候选与当前触发信号
 - `舆情热度`：展示实时榜单与风险信号
 - `金属套利`：展示国内外金属套利对、触发信号和快照历史
-- `期现溢价`：展示 BTC 与 A50 的期现溢价对、触发信号和快照历史
+- `A50 以及加密货币`：展示 A50 多合约与 BTC 单合约的期现溢价对、触发信号和快照历史
 - `报警记录`：展示历史报警与今日汇总
 - `系统状态`：展示数据库、保证金快照、期指/金属/溢价快照、最新信号
         """
