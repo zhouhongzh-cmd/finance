@@ -5,7 +5,7 @@ from typing import Iterable
 
 import pandas as pd
 
-from models.market_data import FuturesData, MetalArbitrageData
+from models.market_data import FuturesData, MetalArbitrageData, PremiumArbitrageData
 from models.signals import Signal
 
 
@@ -39,6 +39,19 @@ METALS_FRONT_COLUMNS = [
     "国际人民币价格",
     "价差",
     "价差百分比(%)",
+]
+
+PREMIUM_GROUP_ORDER = {"BTC": 0, "A50": 1}
+PREMIUM_FRONT_COLUMNS = [
+    "资产组",
+    "现货代码",
+    "现货价格",
+    "期货代码",
+    "期货价格",
+    "溢价值",
+    "溢价率(%)",
+    "状态",
+    "时间",
 ]
 
 
@@ -150,4 +163,51 @@ def build_metals_live_tables(
     df = df.sort_values(by=["_symbol_order", "对比标的"]).drop(columns=["_symbol_order"])
     remaining_columns = [col for col in df.columns if col not in METALS_FRONT_COLUMNS]
     df = df[METALS_FRONT_COLUMNS + remaining_columns]
+    return df, pd.DataFrame(signal_rows)
+
+
+def build_premium_live_tables(
+    data: Iterable[PremiumArbitrageData], signals: Iterable[Signal]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    signal_map = {signal.asset: level_badge(signal.level) for signal in signals}
+    rows = []
+    for item in data:
+        asset = "BTC 期现" if item.asset_group == "BTC" else f"A50 {item.future_name or item.future_symbol}"
+        rows.append(
+            {
+                "资产组": item.asset_group,
+                "现货代码": item.spot_symbol,
+                "现货名称": item.spot_name,
+                "现货价格": round(item.spot_price, 4),
+                "期货代码": item.future_symbol,
+                "期货名称": item.future_name,
+                "期货价格": round(item.future_price, 4),
+                "溢价值": round(item.premium, 4),
+                "溢价率(%)": round(item.premium_rate, 4),
+                "状态": "升水" if item.state == "contango" else "贴水",
+                "现货来源": item.source_spot,
+                "期货来源": item.source_future,
+                "时间": item.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                "信号": signal_map.get(asset, ""),
+                "_group_order": PREMIUM_GROUP_ORDER.get(item.asset_group, 999),
+            }
+        )
+
+    signal_rows = [
+        {
+            "级别": level_badge(signal.level),
+            "标的": signal.asset,
+            "策略": signal.strategy_name,
+            "详情": signal.message.replace("\n", " | "),
+        }
+        for signal in signals
+    ]
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df, pd.DataFrame(signal_rows)
+
+    df = df.sort_values(by=["_group_order", "期货代码"]).drop(columns=["_group_order"])
+    remaining_columns = [col for col in df.columns if col not in PREMIUM_FRONT_COLUMNS]
+    df = df[PREMIUM_FRONT_COLUMNS + remaining_columns]
     return df, pd.DataFrame(signal_rows)

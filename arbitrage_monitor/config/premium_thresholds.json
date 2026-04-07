@@ -1,0 +1,14 @@
+{
+  "BTC": {
+    "upper": 0.5,
+    "lower": -0.5,
+    "upper_enabled": true,
+    "lower_enabled": true
+  },
+  "A50": {
+    "upper": 0.5,
+    "lower": -0.5,
+    "upper_enabled": true,
+    "lower_enabled": true
+  }
+}

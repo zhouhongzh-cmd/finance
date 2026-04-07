@@ -163,21 +163,61 @@
 - `fallback`: 依次回退到 `ak.currency_boc_sina()`、`forex_python.converter.CurrencyRates()`、默认汇率
 - `notes`: 当前系统使用 `USD/CNY` 买报价，失败时自动兜底
 
+### 1.14 BTC 现货主数据源
+
+- `status`: `ACTIVE`
+- `module`: `fetchers/premium_fetcher.py`
+- `name`: `yfinance.BTC-USD`
+- `call`: `yf.Ticker("BTC-USD")`
+- `rate_limit`: 中等
+- `latency`: 中等
+- `quality`: 中
+- `fallback`: 依次尝试 `fast_info`、`info`、`history(period="1d")`；仍失败则跳过 BTC 本轮
+- `notes`: 用于 BTC 期现溢价监控的现货腿
+
+### 1.15 BTC 期货主数据源
+
+- `status`: `ACTIVE`
+- `module`: `fetchers/premium_fetcher.py`
+- `name`: `yfinance.BTC=F`
+- `call`: `yf.Ticker("BTC=F")`
+- `rate_limit`: 中等
+- `latency`: 中等
+- `quality`: 中
+- `fallback`: 依次尝试 `fast_info`、`info`、`history(period="1d")`；仍失败则跳过 BTC 本轮
+- `notes`: 用于 BTC 期现溢价监控的期货腿
+
+### 1.16 A50 现货主数据源
+
+- `status`: `ACTIVE`
+- `module`: `fetchers/premium_fetcher.py`
+- `name`: `yfinance.XIN9.FGI`
+- `call`: `yf.Ticker("XIN9.FGI")`
+- `rate_limit`: 中等
+- `latency`: 中等
+- `quality`: 中
+- `fallback`: 依次尝试 `fast_info`、`info`、`history(period="1d")`；仍失败则跳过 A50 全组
+- `notes`: 用于 A50 期现溢价监控的现货腿
+
+### 1.17 A50 期货主数据源
+
+- `status`: `ACTIVE`
+- `module`: `fetchers/premium_fetcher.py`
+- `name`: `akshare.futures_global_spot_em`
+- `call`: `ak.futures_global_spot_em()`
+- `rate_limit`: 建议低于 `5` 次/秒
+- `latency`: 中等
+- `quality`: 中高
+- `fallback`: 单个 A50 合约缺失时跳过该合约；整表失败则跳过 A50 本轮
+- `notes`: 通过筛选 `名称` 含 `A50` 的全部合约构造 A50 多合约溢价对
+
 ---
 
 ## 2. Planned Data Sources
 
 以下接口属于后续规划，不属于当前 `MVP` 验收范围。
 
-### 2.1 Crypto
-
-- `status`: `PLANNED`
-- `module`: `fetchers/binance_funding.py`
-- `name`: `ccxt.binance`
-- `call`: `ccxt.binance().fetch_funding_rates()`
-- `notes`: 等 `crypto` 模块进入正式范围后再补完整约束
-
-### 2.2 IB
+### 2.1 IB
 
 - `status`: `PLANNED`
 - `module`: `fetchers/ib_margin.py`
@@ -185,7 +225,7 @@
 - `call`: `ib.reqMktData()`
 - `notes`: 等 `ib` 模块进入正式范围后再补完整约束
 
-### 2.3 Macro
+### 2.2 Macro
 
 - `status`: `PLANNED`
 - `module`: `fetchers/ak_macro.py`

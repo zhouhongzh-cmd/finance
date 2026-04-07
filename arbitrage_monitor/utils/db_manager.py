@@ -6,7 +6,12 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, Optional
 
-from models.market_data import FuturesData, FuturesMarginData, MetalArbitrageData
+from models.market_data import (
+    FuturesData,
+    FuturesMarginData,
+    MetalArbitrageData,
+    PremiumArbitrageData,
+)
 from models.signals import Signal
 
 class DBManager:
@@ -106,6 +111,27 @@ class DBManager:
             )
             conn.execute(
                 '''
+                CREATE TABLE IF NOT EXISTS premium_arbitrage_snapshot (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    asset_group TEXT NOT NULL,
+                    spot_symbol TEXT NOT NULL,
+                    spot_name TEXT NOT NULL,
+                    spot_price REAL NOT NULL,
+                    future_symbol TEXT NOT NULL,
+                    future_name TEXT NOT NULL,
+                    future_price REAL NOT NULL,
+                    premium REAL NOT NULL,
+                    premium_rate REAL NOT NULL,
+                    state TEXT NOT NULL,
+                    source_spot TEXT DEFAULT '',
+                    source_future TEXT DEFAULT '',
+                    fetched_at TEXT NOT NULL
+                )
+                '''
+            )
+            conn.execute(
+                '''
                 CREATE TABLE IF NOT EXISTS source_health_status (
                     source_name TEXT PRIMARY KEY,
                     last_success_at TEXT,
@@ -192,6 +218,16 @@ class DBManager:
             "exchange_rate": float(snapshot.exchange_rate),
         }
 
+    def _build_premium_snapshot_state(self, snapshot: PremiumArbitrageData) -> dict:
+        return {
+            "fetched_at": snapshot.timestamp,
+            "spot_price": float(snapshot.spot_price),
+            "future_price": float(snapshot.future_price),
+            "premium": float(snapshot.premium),
+            "premium_rate": float(snapshot.premium_rate),
+            "state": snapshot.state,
+        }
+
     def _get_latest_futures_snapshot_rows(self, conn, symbols: list[str]) -> dict[str, dict]:
         if not symbols:
             return {}
@@ -256,6 +292,38 @@ class DBManager:
             }
         return result
 
+    def _get_latest_premium_snapshot_rows(self, conn, symbols: list[str]) -> dict[str, dict]:
+        if not symbols:
+            return {}
+        placeholders = ",".join(["?"] * len(symbols))
+        rows = conn.execute(
+            f"""
+            SELECT p.id, p.symbol, p.spot_price, p.future_price, p.premium, p.premium_rate,
+                   p.state, p.fetched_at
+            FROM premium_arbitrage_snapshot p
+            INNER JOIN (
+                SELECT symbol, MAX(id) AS max_id
+                FROM premium_arbitrage_snapshot
+                WHERE symbol IN ({placeholders})
+                GROUP BY symbol
+            ) latest
+            ON p.id = latest.max_id
+            """,
+            tuple(symbols),
+        ).fetchall()
+        result: dict[str, dict] = {}
+        for row in rows:
+            result[row[1]] = {
+                "id": int(row[0]),
+                "spot_price": float(row[2]),
+                "future_price": float(row[3]),
+                "premium": float(row[4]),
+                "premium_rate": float(row[5]),
+                "state": str(row[6]),
+                "fetched_at": datetime.fromisoformat(row[7]),
+            }
+        return result
+
     def _classify_futures_snapshot_write(self, snapshot: FuturesData, latest: Optional[dict]) -> str:
         if latest is None:
             return "insert"
@@ -288,6 +356,26 @@ class DBManager:
                 float(snapshot.spread) != latest["spread"],
                 float(snapshot.spread_pct) != latest["spread_pct"],
                 float(snapshot.exchange_rate) != latest["exchange_rate"],
+            )
+        )
+        if self._same_minute(current_ts, latest_ts):
+            return "update" if changed else "skip"
+        if changed or self._heartbeat_due(current_ts, latest_ts):
+            return "insert"
+        return "skip"
+
+    def _classify_premium_snapshot_write(self, snapshot: PremiumArbitrageData, latest: Optional[dict]) -> str:
+        if latest is None:
+            return "insert"
+        current_ts = snapshot.timestamp
+        latest_ts = latest["fetched_at"]
+        changed = any(
+            (
+                float(snapshot.spot_price) != latest["spot_price"],
+                float(snapshot.future_price) != latest["future_price"],
+                float(snapshot.premium) != latest["premium"],
+                float(snapshot.premium_rate) != latest["premium_rate"],
+                snapshot.state != latest["state"],
             )
         )
         if self._same_minute(current_ts, latest_ts):
@@ -486,6 +574,66 @@ class DBManager:
                     }
                 conn.commit()
 
+    def save_premium_snapshots(self, snapshots: Iterable[PremiumArbitrageData]) -> None:
+        snapshots = list(snapshots)
+        if not snapshots:
+            return
+
+        with self._write_lock:
+            with self.get_connection() as conn:
+                latest_rows = self._get_latest_premium_snapshot_rows(
+                    conn, [snapshot.symbol for snapshot in snapshots]
+                )
+                for snapshot in snapshots:
+                    latest = latest_rows.get(snapshot.symbol)
+                    action = self._classify_premium_snapshot_write(snapshot, latest)
+                    if action == "skip":
+                        continue
+                    row = (
+                        snapshot.symbol,
+                        snapshot.asset_group,
+                        snapshot.spot_symbol,
+                        snapshot.spot_name,
+                        snapshot.spot_price,
+                        snapshot.future_symbol,
+                        snapshot.future_name,
+                        snapshot.future_price,
+                        snapshot.premium,
+                        snapshot.premium_rate,
+                        snapshot.state,
+                        snapshot.source_spot,
+                        snapshot.source_future,
+                        snapshot.timestamp.isoformat(),
+                    )
+                    if action == "update" and latest is not None:
+                        conn.execute(
+                            """
+                            UPDATE premium_arbitrage_snapshot
+                            SET asset_group = ?, spot_symbol = ?, spot_name = ?, spot_price = ?,
+                                future_symbol = ?, future_name = ?, future_price = ?, premium = ?,
+                                premium_rate = ?, state = ?, source_spot = ?, source_future = ?, fetched_at = ?
+                            WHERE id = ?
+                            """,
+                            row[1:] + (latest["id"],),
+                        )
+                    else:
+                        cursor = conn.execute(
+                            """
+                            INSERT INTO premium_arbitrage_snapshot
+                            (symbol, asset_group, spot_symbol, spot_name, spot_price, future_symbol,
+                             future_name, future_price, premium, premium_rate, state, source_spot,
+                             source_future, fetched_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            row,
+                        )
+                        latest = {"id": int(cursor.lastrowid), **self._build_premium_snapshot_state(snapshot)}
+                    latest_rows[snapshot.symbol] = {
+                        "id": latest["id"],
+                        **self._build_premium_snapshot_state(snapshot),
+                    }
+                conn.commit()
+
     def save_cooldown_state(self, strategy_key: str, last_alert_iso: str) -> None:
         """持久化冷却期状态。"""
         with self._write_lock:
@@ -537,6 +685,17 @@ class DBManager:
             with self.get_connection() as conn:
                 cursor = conn.execute(
                     "DELETE FROM metal_arbitrage_snapshot WHERE fetched_at < ?",
+                    (cutoff,),
+                )
+                conn.commit()
+                return int(cursor.rowcount or 0)
+
+    def purge_premium_snapshots_older_than(self, retention_days: int) -> int:
+        cutoff = (datetime.now() - timedelta(days=retention_days)).isoformat()
+        with self._write_lock:
+            with self.get_connection() as conn:
+                cursor = conn.execute(
+                    "DELETE FROM premium_arbitrage_snapshot WHERE fetched_at < ?",
                     (cutoff,),
                 )
                 conn.commit()
@@ -623,6 +782,20 @@ class DBManager:
                 SELECT metal_symbol, metal_name, benchmark_display_name, dom_price, for_price_cny,
                        for_price_usd, exchange_rate, implied_rate, spread, spread_pct, category, fetched_at
                 FROM metal_arbitrage_snapshot
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            return cursor.fetchall()
+
+    def get_recent_premium_snapshots(self, limit: int = 200):
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT asset_group, spot_symbol, spot_name, spot_price, future_symbol, future_name,
+                       future_price, premium, premium_rate, state, source_spot, source_future, fetched_at
+                FROM premium_arbitrage_snapshot
                 ORDER BY id DESC
                 LIMIT ?
                 """,

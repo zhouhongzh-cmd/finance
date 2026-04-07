@@ -39,6 +39,7 @@
 - 可转债负溢价与双低监控
 - A 股人气/舆情热度监控
 - 金属跨市场套利监控
+- BTC + A50 期现溢价监控
 - 调度器定时执行
 - SQLite 本地持久化
 - 冷却期去重
@@ -51,10 +52,12 @@
 - `fetchers/ak_futures.py`
 - `fetchers/ak_convertible.py`
 - `fetchers/ak_metals.py`
+- `fetchers/premium_fetcher.py`
 - `fetchers/sentiment_spider.py`
 - `strategies/futures_strategy.py`
 - `strategies/cb_strategy.py`
 - `strategies/metals_strategy.py`
+- `strategies/premium_strategy.py`
 - `strategies/sentiment_strategy.py`
 - `core_scheduler.py`
 - `utils/db_manager.py`
@@ -66,7 +69,6 @@
 以下方向允许保留规划，但不纳入当前版本验收：
 
 - 宏观套利策略
-- 加密货币套利策略
 - 盈透相关策略
 - 自动下单
 - 实盘交易执行
@@ -80,7 +82,6 @@
 以下内容属于后续扩展，不得作为当前版本未完成的理由：
 
 - `macro_strategy.py` + `ak_macro.py`
-- `crypto_strategy.py` + `binance_funding.py`
 - `ib_strategy.py` + `ib_margin.py`
 - 通知链路增强（失败重试 / 多渠道回执 / 崩溃补发）
 - 更完整的监控面板
@@ -225,6 +226,7 @@
 - `FuturesData`
 - `CBData`
 - `MetalArbitrageData`
+- `PremiumArbitrageData`
 - `SentimentData`
 - `Signal`
 
@@ -376,7 +378,34 @@
 - 持久化文件为 `config/metals_thresholds.json`
 - `fetch_live()` 与 `fetch_from_fixture()` 必须返回同一数据契约
 
-### 8.6 新策略接入规则
+### 8.6 期现溢价策略
+
+当前版本新增独立的 `premium` 模块，负责监控 `BTC` 与 `A50` 的期现溢价，不承担自动交易职责。
+
+输入至少包含：
+
+- `asset_group`
+- `spot_symbol`
+- `spot_price`
+- `future_symbol`
+- `future_price`
+- `premium`
+- `premium_rate`
+- `state`
+
+触发条件：
+
+- 按资产组读取 `upper` / `lower` 阈值
+- `premium_rate >= upper` 或 `premium_rate <= lower` 时触发
+- 超过绝对阈值 `1.5x` 时升级为 `CRITICAL`
+
+降级约束：
+
+- BTC 现货或期货任一缺失时跳过 BTC 本轮计算
+- A50 现货缺失时跳过 A50 全组计算
+- A50 某些远月合约缺失时允许仅跳过该合约，其余合约继续计算
+
+### 8.7 新策略接入规则
 
 当前版本新增策略默认需要修改调度器注册逻辑。
 

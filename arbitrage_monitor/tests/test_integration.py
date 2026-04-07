@@ -671,7 +671,7 @@ def test_snapshot_deduplication():
     """测试高频快照分钟去重与变化更新。"""
     logger.info("test_snapshot_deduplication_start")
 
-    from models.market_data import FuturesData, MetalArbitrageData
+    from models.market_data import FuturesData, MetalArbitrageData, PremiumArbitrageData
 
     db = DBManager()
     base_ts = datetime.now().replace(second=5, microsecond=0)
@@ -743,6 +743,41 @@ def test_snapshot_deduplication():
     db.save_metal_snapshots([metal_a])
     db.save_metal_snapshots([metal_b])
 
+    premium_a = PremiumArbitrageData(
+        symbol="BTC:BTC=F",
+        timestamp=base_ts,
+        asset_group="BTC",
+        spot_symbol="BTC-USD",
+        spot_name="BTC现货",
+        spot_price=68000,
+        future_symbol="BTC=F",
+        future_name="BTC期货",
+        future_price=68100,
+        premium=100,
+        premium_rate=0.147,
+        state="contango",
+        source_spot="fixture",
+        source_future="fixture",
+    )
+    premium_b = PremiumArbitrageData(
+        symbol="BTC:BTC=F",
+        timestamp=later_same_minute,
+        asset_group="BTC",
+        spot_symbol="BTC-USD",
+        spot_name="BTC现货",
+        spot_price=68010,
+        future_symbol="BTC=F",
+        future_name="BTC期货",
+        future_price=68120,
+        premium=110,
+        premium_rate=0.162,
+        state="contango",
+        source_spot="fixture",
+        source_future="fixture",
+    )
+    db.save_premium_snapshots([premium_a])
+    db.save_premium_snapshots([premium_b])
+
     with db.get_connection() as conn:
         futures_rows = conn.execute(
             "SELECT COUNT(*), MAX(price), MAX(discount_rate) FROM futures_live_snapshot WHERE symbol = 'DEDUP_IF'"
@@ -750,8 +785,12 @@ def test_snapshot_deduplication():
         metal_rows = conn.execute(
             "SELECT COUNT(*), MAX(dom_price), MAX(spread_pct) FROM metal_arbitrage_snapshot WHERE symbol = 'DEDUP_AU:GC'"
         ).fetchone()
+        premium_rows = conn.execute(
+            "SELECT COUNT(*), MAX(future_price), MAX(premium_rate) FROM premium_arbitrage_snapshot WHERE symbol = 'BTC:BTC=F'"
+        ).fetchone()
         conn.execute("DELETE FROM futures_live_snapshot WHERE symbol = 'DEDUP_IF'")
         conn.execute("DELETE FROM metal_arbitrage_snapshot WHERE symbol = 'DEDUP_AU:GC'")
+        conn.execute("DELETE FROM premium_arbitrage_snapshot WHERE symbol = 'BTC:BTC=F'")
         conn.commit()
 
     if futures_rows[0] != 1 or float(futures_rows[1]) != 3501 or float(futures_rows[2]) != 1.1:
@@ -759,6 +798,9 @@ def test_snapshot_deduplication():
         return False
     if metal_rows[0] != 1 or float(metal_rows[1]) != 701 or float(metal_rows[2]) != 0.15:
         print(f"❌ Snapshot Deduplication: metal rows mismatch {metal_rows}")
+        return False
+    if premium_rows[0] != 1 or float(premium_rows[1]) != 68120 or float(premium_rows[2]) != 0.162:
+        print(f"❌ Snapshot Deduplication: premium rows mismatch {premium_rows}")
         return False
 
     logger.info("snapshot_deduplication_ok")
@@ -1005,6 +1047,7 @@ def test_fetchers_mock():
     from fetchers.ak_futures import futures_fetcher
     from fetchers.ak_convertible import convertible_fetcher
     from fetchers.ak_metals import metals_fetcher
+    from fetchers.premium_fetcher import premium_fetcher
     from fetchers.sentiment_spider import sentiment_fetcher
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1029,6 +1072,15 @@ def test_fetchers_mock():
     logger.info("metals_mock_loaded", count=len(metals_data))
     print(f"✅ Metals Fetcher (Mock): {len(metals_data)} records")
 
+    premium_path = os.path.join(base_dir, "tests/fixtures/premium_sample.json")
+    premium_data = premium_fetcher.fetch_from_fixture(premium_path)
+    logger.info("premium_mock_loaded", count=len(premium_data))
+    print(f"✅ Premium Fetcher (Mock): {len(premium_data)} records")
+
+    if len(premium_data) != 3:
+        print(f"❌ Fetchers Mock: expected 3 valid premium rows, got {len(premium_data)}")
+        return False
+
     return True
 
 
@@ -1039,10 +1091,12 @@ def test_strategies():
     from fetchers.ak_futures import futures_fetcher
     from fetchers.ak_convertible import convertible_fetcher
     from fetchers.ak_metals import metals_fetcher
+    from fetchers.premium_fetcher import premium_fetcher
     from fetchers.sentiment_spider import sentiment_fetcher
     from strategies.futures_strategy import FuturesDiscountStrategy
     from strategies.cb_strategy import ConvertibleStrategy
     from strategies.metals_strategy import MetalsArbitrageStrategy
+    from strategies.premium_strategy import PremiumArbitrageStrategy
     from strategies.sentiment_strategy import SentimentStrategy
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1075,6 +1129,13 @@ def test_strategies():
     logger.info("metals_strategy_evaluated", signals=len(metals_signals))
     print(f"✅ Metals Strategy: {len(metals_signals)} signals")
 
+    premium_path = os.path.join(base_dir, "tests/fixtures/premium_sample.json")
+    premium_data = premium_fetcher.fetch_from_fixture(premium_path)
+    premium_strategy = PremiumArbitrageStrategy()
+    premium_signals = premium_strategy.evaluate(premium_data)
+    logger.info("premium_strategy_evaluated", signals=len(premium_signals))
+    print(f"✅ Premium Strategy: {len(premium_signals)} signals")
+
     return True
 
 
@@ -1082,12 +1143,14 @@ def test_dashboard_table_ordering():
     """测试期指和金属主表的固定排序与前置列顺序。"""
     logger.info("test_dashboard_table_ordering_start")
 
-    from models.market_data import FuturesData, MetalArbitrageData
+    from models.market_data import FuturesData, MetalArbitrageData, PremiumArbitrageData
     from utils.dashboard_tables import (
         FUTURES_FRONT_COLUMNS,
         METALS_FRONT_COLUMNS,
+        PREMIUM_FRONT_COLUMNS,
         build_futures_live_tables,
         build_metals_live_tables,
+        build_premium_live_tables,
     )
 
     futures_data = [
@@ -1119,6 +1182,18 @@ def test_dashboard_table_ordering():
         return False
     if metals_df.columns[: len(METALS_FRONT_COLUMNS)].tolist() != METALS_FRONT_COLUMNS:
         print("❌ Dashboard Ordering: metals front columns mismatch")
+        return False
+
+    premium_data = [
+        PremiumArbitrageData(symbol="A50:CN00Y", timestamp=datetime.now(), asset_group="A50", spot_symbol="XIN9.FGI", spot_name="A50现货", spot_price=14529.54, future_symbol="CN00Y", future_name="A50期指当月连续", future_price=14422.0, premium=-107.54, premium_rate=-0.74, state="backwardation", source_spot="fixture", source_future="fixture"),
+        PremiumArbitrageData(symbol="BTC:BTC=F", timestamp=datetime.now(), asset_group="BTC", spot_symbol="BTC-USD", spot_name="BTC现货", spot_price=68102.59, future_symbol="BTC=F", future_name="BTC期货", future_price=68025.0, premium=-77.59, premium_rate=-0.11, state="backwardation", source_spot="fixture", source_future="fixture"),
+    ]
+    premium_df, _ = build_premium_live_tables(premium_data, [])
+    if premium_df["资产组"].tolist() != ["BTC", "A50"]:
+        print(f"❌ Dashboard Ordering: unexpected premium order {premium_df['资产组'].tolist()}")
+        return False
+    if premium_df.columns[: len(PREMIUM_FRONT_COLUMNS)].tolist() != PREMIUM_FRONT_COLUMNS:
+        print("❌ Dashboard Ordering: premium front columns mismatch")
         return False
 
     logger.info("dashboard_table_ordering_ok")
@@ -2155,7 +2230,7 @@ def test_retention_cleanup():
     """测试历史报警与各类快照的保留期清理。"""
     logger.info("test_retention_cleanup_start")
 
-    from models.market_data import FuturesData, FuturesMarginData, MetalArbitrageData
+    from models.market_data import FuturesData, FuturesMarginData, MetalArbitrageData, PremiumArbitrageData
 
     db = DBManager()
     old_ts = datetime.now().replace(microsecond=0) - timedelta(days=365)
@@ -2282,11 +2357,48 @@ def test_retention_cleanup():
             ),
         ]
     )
+    db.save_premium_snapshots(
+        [
+            PremiumArbitrageData(
+                symbol="RETENTION_BTC_OLD",
+                timestamp=old_ts,
+                asset_group="BTC",
+                spot_symbol="BTC-USD",
+                spot_name="BTC现货",
+                spot_price=68000,
+                future_symbol="BTC=F",
+                future_name="BTC期货",
+                future_price=68100,
+                premium=100,
+                premium_rate=0.147,
+                state="contango",
+                source_spot="retention_old",
+                source_future="retention_old",
+            ),
+            PremiumArbitrageData(
+                symbol="RETENTION_A50_NEW",
+                timestamp=new_ts,
+                asset_group="A50",
+                spot_symbol="XIN9.FGI",
+                spot_name="A50现货",
+                spot_price=14529.54,
+                future_symbol="CN00Y",
+                future_name="A50期指当月连续",
+                future_price=14422.0,
+                premium=-107.54,
+                premium_rate=-0.74,
+                state="backwardation",
+                source_spot="retention_new",
+                source_future="retention_new",
+            ),
+        ]
+    )
 
     deleted_alerts = db.purge_alert_history_older_than(30)
     deleted_margins = db.purge_futures_margin_snapshots_older_than(30)
     deleted_futures = db.purge_futures_live_snapshots_older_than(30)
     deleted_metals = db.purge_metal_snapshots_older_than(30)
+    deleted_premium = db.purge_premium_snapshots_older_than(30)
 
     with db.get_connection() as conn:
         old_alert_count = conn.execute(
@@ -2315,6 +2427,12 @@ def test_retention_cleanup():
             "SELECT COUNT(*) FROM metal_arbitrage_snapshot WHERE symbol = 'AG0:SI' AND fetched_at = ?",
             (new_ts.isoformat(),),
         ).fetchone()[0]
+        old_premium_count = conn.execute(
+            "SELECT COUNT(*) FROM premium_arbitrage_snapshot WHERE symbol = 'RETENTION_BTC_OLD'"
+        ).fetchone()[0]
+        new_premium_count = conn.execute(
+            "SELECT COUNT(*) FROM premium_arbitrage_snapshot WHERE symbol = 'RETENTION_A50_NEW'"
+        ).fetchone()[0]
         conn.execute("DELETE FROM alert_history WHERE asset = 'RETENTION_NEW'")
         conn.execute(
             "DELETE FROM futures_margin_snapshot WHERE source = 'retention_new'"
@@ -2324,6 +2442,7 @@ def test_retention_cleanup():
             "DELETE FROM metal_arbitrage_snapshot WHERE symbol = 'AG0:SI' AND fetched_at = ?",
             (new_ts.isoformat(),),
         )
+        conn.execute("DELETE FROM premium_arbitrage_snapshot WHERE symbol = 'RETENTION_A50_NEW'")
         conn.commit()
 
     if deleted_alerts < 1 or old_alert_count != 0 or new_alert_count != 1:
@@ -2350,6 +2469,12 @@ def test_retention_cleanup():
             f"(deleted={deleted_metals}, old={old_metals_count}, new={new_metals_count})"
         )
         return False
+    if deleted_premium < 1 or old_premium_count != 0 or new_premium_count != 1:
+        print(
+            "❌ Retention Cleanup: premium snapshot cleanup mismatch "
+            f"(deleted={deleted_premium}, old={old_premium_count}, new={new_premium_count})"
+        )
+        return False
 
     logger.info(
         "retention_cleanup_ok",
@@ -2357,8 +2482,120 @@ def test_retention_cleanup():
         deleted_margins=deleted_margins,
         deleted_futures=deleted_futures,
         deleted_metals=deleted_metals,
+        deleted_premium=deleted_premium,
     )
     print("✅ Retention Cleanup: OK")
+    return True
+
+
+def test_premium_threshold_local_override():
+    """测试 premium 阈值 local override 优先级。"""
+    logger.info("test_premium_threshold_local_override_start")
+
+    import utils.premium_config as premium_config
+
+    original_shared_path_fn = premium_config.get_premium_thresholds_path
+    original_local_path_fn = premium_config.get_local_premium_thresholds_path
+    original_cache = premium_config._threshold_cache
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        shared_path = temp_root / "config" / "premium_thresholds.json"
+        local_path = temp_root / "config" / "premium_thresholds.local.json"
+        shared_path.parent.mkdir(parents=True, exist_ok=True)
+        shared_path.write_text(
+            json.dumps(
+                {
+                    "BTC": {"upper": 0.5, "lower": -0.5, "upper_enabled": True, "lower_enabled": True},
+                    "A50": {"upper": 0.5, "lower": -0.5, "upper_enabled": True, "lower_enabled": True},
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        local_path.write_text(
+            json.dumps(
+                {
+                    "BTC": {"upper": 1.2, "lower": -1.0, "upper_enabled": True, "lower_enabled": False}
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        premium_config.get_premium_thresholds_path = lambda: shared_path
+        premium_config.get_local_premium_thresholds_path = lambda: local_path
+        premium_config._threshold_cache = None
+
+        try:
+            btc = premium_config.get_effective_premium_threshold("BTC")
+            a50 = premium_config.get_effective_premium_threshold("A50")
+        finally:
+            premium_config.get_premium_thresholds_path = original_shared_path_fn
+            premium_config.get_local_premium_thresholds_path = original_local_path_fn
+            premium_config._threshold_cache = original_cache
+
+    if float(btc["upper"]) != 1.2 or bool(btc["lower_enabled"]) is not False:
+        print(f"❌ Premium Threshold Override: BTC override mismatch {btc}")
+        return False
+    if float(a50["upper"]) != 0.5 or float(a50["lower"]) != -0.5:
+        print(f"❌ Premium Threshold Override: A50 shared fallback mismatch {a50}")
+        return False
+
+    logger.info("premium_threshold_local_override_ok")
+    print("✅ Premium Threshold Local Override: OK")
+    return True
+
+
+def test_premium_module_integration():
+    """测试 premium 模块调度独立运行。"""
+    logger.info("test_premium_module_integration_start")
+
+    import core_scheduler as cs
+    from config.settings import settings
+
+    original_run_strategy_task = cs.run_strategy_task
+    original_sync_runtime_settings = cs.sync_runtime_settings
+    original_is_module_watch_hours = cs.is_module_watch_hours
+    original = {
+        "ENABLE_PREMIUM_MONITOR": settings.ENABLE_PREMIUM_MONITOR,
+        "ENABLE_PREMIUM_CRUISE": settings.ENABLE_PREMIUM_CRUISE,
+        "ENABLE_PREMIUM_WATCH": settings.ENABLE_PREMIUM_WATCH,
+    }
+    executed: list[str] = []
+
+    def fake_run_strategy_task(fetcher, strategy, strategy_name: str):
+        executed.append(strategy_name)
+        return {"status": "SUCCESS"}
+
+    try:
+        cs.run_strategy_task = fake_run_strategy_task
+        cs.sync_runtime_settings = lambda: None
+        cs.is_module_watch_hours = lambda prefix, now=None: prefix == "PREMIUM"
+        settings.apply_updates(
+            {
+                "ENABLE_PREMIUM_MONITOR": True,
+                "ENABLE_PREMIUM_CRUISE": True,
+                "ENABLE_PREMIUM_WATCH": False,
+            }
+        )
+        cs.run_premium_cruise_mode()
+        cs.run_premium_watch_mode()
+    finally:
+        settings.apply_updates(original)
+        cs.run_strategy_task = original_run_strategy_task
+        cs.sync_runtime_settings = original_sync_runtime_settings
+        cs.is_module_watch_hours = original_is_module_watch_hours
+
+    if executed != ["Premium_Arbitrage"]:
+        print(f"❌ Premium Module Integration: unexpected executed strategies {executed}")
+        return False
+
+    logger.info("premium_module_integration_ok", executed=executed)
+    print("✅ Premium Module Integration: OK")
     return True
 
 
@@ -2391,6 +2628,7 @@ def main():
         ("Current Metals Config Compatibility", test_current_metals_threshold_file_compatibility),
         ("Metals Threshold Local Override", test_metals_threshold_local_override),
         ("Futures Threshold Local Override", test_futures_threshold_local_override),
+        ("Premium Threshold Local Override", test_premium_threshold_local_override),
         ("Source Health Tracking", test_source_health_tracking),
         ("Config Audit History", test_config_audit_history),
         ("Job Run Status Tracking", test_job_run_status_tracking),
@@ -2401,6 +2639,7 @@ def main():
         ("Active Contracts", test_active_futures_contract_generation),
         ("Spot Index Fallback", test_spot_index_fallback_parser),
         ("Module Schedule Windows", test_module_schedule_windows),
+        ("Premium Module Integration", test_premium_module_integration),
         ("Scheduler Imports", test_scheduler_imports),
         ("Full Pipeline", test_full_pipeline),
     ]

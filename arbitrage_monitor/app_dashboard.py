@@ -21,14 +21,17 @@ import streamlit as st
 from fetchers.ak_convertible import convertible_fetcher
 from fetchers.ak_futures import futures_fetcher
 from fetchers.ak_metals import metals_fetcher
+from fetchers.premium_fetcher import premium_fetcher
 from fetchers.sentiment_spider import sentiment_fetcher
 from strategies.cb_strategy import ConvertibleStrategy
 from strategies.futures_strategy import FuturesDiscountStrategy
 from strategies.metals_strategy import MetalsArbitrageStrategy
+from strategies.premium_strategy import PremiumArbitrageStrategy
 from strategies.sentiment_strategy import SentimentStrategy
 from utils.dashboard_tables import (
     build_futures_live_tables,
     build_metals_live_tables,
+    build_premium_live_tables,
 )
 from utils.db_manager import DBManager
 
@@ -131,6 +134,9 @@ def get_db_stats() -> dict[str, float]:
         metal_snapshots = conn.execute(
             "SELECT COUNT(*) FROM metal_arbitrage_snapshot"
         ).fetchone()[0]
+        premium_snapshots = conn.execute(
+            "SELECT COUNT(*) FROM premium_arbitrage_snapshot"
+        ).fetchone()[0]
 
     db_size = (
         os.path.getsize(db_manager.db_path) if os.path.exists(db_manager.db_path) else 0
@@ -144,6 +150,7 @@ def get_db_stats() -> dict[str, float]:
         "margin_snapshots": margin_snapshots,
         "futures_snapshots": futures_snapshots,
         "metal_snapshots": metal_snapshots,
+        "premium_snapshots": premium_snapshots,
         "db_size_kb": round(db_size / 1024, 1),
     }
 
@@ -185,6 +192,14 @@ def fetch_metals_live_view() -> tuple[pd.DataFrame, pd.DataFrame]:
     return build_metals_live_tables(data, signals)
 
 
+@st.cache_data(ttl=30)
+def fetch_premium_live_view() -> tuple[pd.DataFrame, pd.DataFrame]:
+    data = premium_fetcher.fetch_live()
+    db_manager.save_premium_snapshots(data)
+    signals = PremiumArbitrageStrategy().evaluate(data)
+    return build_premium_live_tables(data, signals)
+
+
 @st.cache_data(ttl=60)
 def fetch_recent_metal_snapshot_history(limit: int = 200) -> pd.DataFrame:
     with db_manager.get_connection() as conn:
@@ -193,6 +208,26 @@ def fetch_recent_metal_snapshot_history(limit: int = 200) -> pd.DataFrame:
             SELECT fetched_at, metal_symbol, metal_name, benchmark_display_name, dom_price,
                    for_price_cny, for_price_usd, exchange_rate, implied_rate, spread, spread_pct, category
             FROM metal_arbitrage_snapshot
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            conn,
+            params=(limit,),
+        )
+    if not df.empty:
+        df["fetched_at"] = pd.to_datetime(df["fetched_at"])
+    return df
+
+
+@st.cache_data(ttl=60)
+def fetch_recent_premium_snapshot_history(limit: int = 200) -> pd.DataFrame:
+    with db_manager.get_connection() as conn:
+        df = pd.read_sql_query(
+            """
+            SELECT fetched_at, asset_group, spot_symbol, spot_name, spot_price,
+                   future_symbol, future_name, future_price, premium, premium_rate,
+                   state, source_spot, source_future
+            FROM premium_arbitrage_snapshot
             ORDER BY id DESC
             LIMIT ?
             """,
@@ -432,6 +467,7 @@ sidebar.metric("冷却记录", stats["cooldowns"])
 sidebar.metric("保证金快照", stats["margin_snapshots"])
 sidebar.metric("期指快照", stats["futures_snapshots"])
 sidebar.metric("金属快照", stats["metal_snapshots"])
+sidebar.metric("溢价快照", stats["premium_snapshots"])
 sidebar.metric("监控标的数", stats["unique_assets"])
 sidebar.metric("数据库大小", f"{stats['db_size_kb']} KB")
 sidebar.info(f"更新时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -441,7 +477,7 @@ sidebar.caption("金属阈值和模块时钟在“参数设置”页。")
 
 view = st.radio(
     "模块",
-    ["中金所股指", "可转债", "舆情热度", "金属套利", "报警记录", "系统状态", "软件说明"],
+    ["中金所股指", "可转债", "舆情热度", "金属套利", "期现溢价", "报警记录", "系统状态", "软件说明"],
     horizontal=True,
     label_visibility="collapsed",
 )
@@ -590,6 +626,52 @@ elif view == "金属套利":
         )
         st.dataframe(history_df, width="stretch", hide_index=True)
 
+elif view == "期现溢价":
+    left, right = st.columns([1, 5])
+    refresh_now = False
+    with left:
+        refresh_now = st.button("刷新", key="refresh_premium")
+    with right:
+        st.markdown("#### BTC + A50 期现溢价数据")
+
+    if hasattr(st, "page_link"):
+        st.page_link("pages/1_参数设置.py", label="去调整期现溢价阈值和模块时钟", icon="⚙️")
+
+    with st.spinner("加载期现溢价实时数据..."):
+        premium_df, premium_signal_df, premium_fetched_at = load_live_data(
+            "premium_live", fetch_premium_live_view, refresh=refresh_now
+        )
+
+    st.caption(f"最近抓取时间：{premium_fetched_at}")
+
+    if not premium_df.empty:
+        asset_filter = st.multiselect(
+            "资产组筛选",
+            options=sorted(premium_df["资产组"].unique().tolist()),
+            default=sorted(premium_df["资产组"].unique().tolist()),
+            key="premium_asset_filter",
+        )
+        if asset_filter:
+            premium_df = premium_df[premium_df["资产组"].isin(asset_filter)]
+
+    st.dataframe(premium_df, width="stretch", hide_index=True)
+    st.caption(f"当前溢价对数：{len(premium_df)}")
+
+    st.markdown("#### 当前触发信号")
+    if premium_signal_df.empty:
+        st.info("当前无期现溢价触发信号")
+    else:
+        st.dataframe(premium_signal_df, width="stretch", hide_index=True)
+
+    st.markdown("#### 最近快照历史")
+    history_limit = st.slider("历史快照条数", 20, 500, 100, 20, key="premium_history_limit")
+    history_df = fetch_recent_premium_snapshot_history(limit=history_limit)
+    if history_df.empty:
+        st.info("暂无期现溢价快照历史")
+    else:
+        history_df["fetched_at"] = history_df["fetched_at"].dt.strftime("%Y-%m-%d %H:%M:%S")
+        st.dataframe(history_df, width="stretch", hide_index=True)
+
 elif view == "报警记录":
     st.markdown("#### 历史报警记录")
     latest_limit = st.slider("显示最近记录数", 50, 1000, 200, 50, key="alert_limit")
@@ -626,7 +708,9 @@ elif view == "系统状态":
     cols2[0].metric("保证金快照", stats["margin_snapshots"])
     cols2[1].metric("期指快照", stats["futures_snapshots"])
     cols2[2].metric("金属快照", stats["metal_snapshots"])
-    cols2[3].metric("冷却记录", stats["cooldowns"])
+    cols2[3].metric("溢价快照", stats["premium_snapshots"])
+    cols3 = st.columns(4)
+    cols3[0].metric("冷却记录", stats["cooldowns"])
 
     st.markdown("#### 保证金最新快照")
     margin_df = fetch_latest_margin_table()
@@ -686,7 +770,8 @@ elif view == "软件说明":
 - `可转债`：展示实时转债候选与当前触发信号
 - `舆情热度`：展示实时榜单与风险信号
 - `金属套利`：展示国内外金属套利对、触发信号和快照历史
+- `期现溢价`：展示 BTC 与 A50 的期现溢价对、触发信号和快照历史
 - `报警记录`：展示历史报警与今日汇总
-- `系统状态`：展示数据库、保证金快照、期指/金属快照、最新信号
+- `系统状态`：展示数据库、保证金快照、期指/金属/溢价快照、最新信号
         """
     )

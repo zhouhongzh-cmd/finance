@@ -18,10 +18,12 @@ from fetchers.ak_convertible import convertible_fetcher
 from fetchers.ak_futures import futures_fetcher
 from fetchers.ak_metals import metals_fetcher
 from fetchers.futures_margin import futures_margin_fetcher
+from fetchers.premium_fetcher import premium_fetcher
 from fetchers.sentiment_spider import sentiment_fetcher
 from strategies.cb_strategy import ConvertibleStrategy
 from strategies.futures_strategy import FuturesDiscountStrategy
 from strategies.metals_strategy import MetalsArbitrageStrategy
+from strategies.premium_strategy import PremiumArbitrageStrategy
 from strategies.sentiment_strategy import SentimentStrategy
 from utils.db_manager import DBManager
 from utils.logger import configure_logger, logger
@@ -86,6 +88,18 @@ MODULE_RUNTIME_CONFIG = {
             "watch": "metals_watch_mode",
         },
         "prefix": "METALS",
+    },
+    "premium": {
+        "enabled_field": "ENABLE_PREMIUM_MONITOR",
+        "cruise_enabled_field": "ENABLE_PREMIUM_CRUISE",
+        "watch_enabled_field": "ENABLE_PREMIUM_WATCH",
+        "cruise_field": "PREMIUM_CRUISE_INTERVAL_MINUTES",
+        "watch_field": "PREMIUM_WATCH_INTERVAL_SECONDS",
+        "job_ids": {
+            "cruise": "premium_cruise_mode",
+            "watch": "premium_watch_mode",
+        },
+        "prefix": "PREMIUM",
     },
 }
 
@@ -219,6 +233,8 @@ def persist_runtime_data(strategy_name: str, data) -> None:
             db_manager.save_futures_live_snapshots(data)
         elif strategy_name == "Metals_Arbitrage":
             db_manager.save_metal_snapshots(data)
+        elif strategy_name == "Premium_Arbitrage":
+            db_manager.save_premium_snapshots(data)
     except Exception as exc:
         logger.warning(
             "runtime_snapshot_persist_failed",
@@ -568,6 +584,42 @@ def run_metals_watch_mode():
     return execute_job("metals_watch_mode", _runner)
 
 
+def run_premium_cruise_mode():
+    def _runner():
+        sync_runtime_settings()
+        if not settings.ENABLE_PREMIUM_MONITOR:
+            logger.info("strategy_disabled", strategy="Premium_Arbitrage")
+            return {"status": "DISABLED"}
+        if not settings.ENABLE_PREMIUM_CRUISE:
+            return {"status": "DISABLED_MODE"}
+        if is_module_watch_hours("PREMIUM") and settings.ENABLE_PREMIUM_WATCH:
+            logger.debug("premium_cruise_skipped_watch_preferred")
+            return {"status": "SKIPPED_WINDOW"}
+        return run_strategy_task(
+            premium_fetcher, PremiumArbitrageStrategy(), "Premium_Arbitrage"
+        )
+
+    return execute_job("premium_cruise_mode", _runner)
+
+
+def run_premium_watch_mode():
+    def _runner():
+        sync_runtime_settings()
+        if not is_module_watch_hours("PREMIUM"):
+            logger.debug("premium_watch_skipped_non_trading_hours")
+            return {"status": "SKIPPED_WINDOW"}
+        if not settings.ENABLE_PREMIUM_MONITOR:
+            logger.info("strategy_disabled", strategy="Premium_Arbitrage")
+            return {"status": "DISABLED"}
+        if not settings.ENABLE_PREMIUM_WATCH:
+            return {"status": "DISABLED_MODE"}
+        return run_strategy_task(
+            premium_fetcher, PremiumArbitrageStrategy(), "Premium_Arbitrage"
+        )
+
+    return execute_job("premium_watch_mode", _runner)
+
+
 def send_heartbeat():
     try:
         logger.info("heartbeat_start")
@@ -617,6 +669,7 @@ def cleanup_old_runtime_data():
         margin_rows = db_manager.purge_futures_margin_snapshots_older_than(retention_days)
         futures_rows = db_manager.purge_futures_live_snapshots_older_than(retention_days)
         metals_rows = db_manager.purge_metal_snapshots_older_than(retention_days)
+        premium_rows = db_manager.purge_premium_snapshots_older_than(retention_days)
         logger.info(
             "retention_cleanup_completed",
             retention_days=retention_days,
@@ -624,6 +677,7 @@ def cleanup_old_runtime_data():
             deleted_margin_rows=margin_rows,
             deleted_futures_snapshot_rows=futures_rows,
             deleted_metal_snapshot_rows=metals_rows,
+            deleted_premium_snapshot_rows=premium_rows,
         )
         return {"status": "SUCCESS"}
     except Exception as exc:
@@ -722,6 +776,21 @@ def schedule_jobs():
         misfire_grace_time=30,
     )
     scheduler.add_job(
+        run_premium_cruise_mode,
+        "interval",
+        minutes=settings.PREMIUM_CRUISE_INTERVAL_MINUTES,
+        id="premium_cruise_mode",
+        name="Premium Cruise Mode Scan",
+    )
+    scheduler.add_job(
+        run_premium_watch_mode,
+        "interval",
+        seconds=settings.PREMIUM_WATCH_INTERVAL_SECONDS,
+        id="premium_watch_mode",
+        name="Premium Watch Mode Scan",
+        misfire_grace_time=30,
+    )
+    scheduler.add_job(
         run_daily_heartbeat_job,
         "cron",
         hour=9,
@@ -780,6 +849,8 @@ def main():
         sentiment_interval=settings.SENTIMENT_CRUISE_INTERVAL_MINUTES,
         metals_cruise_interval=settings.METALS_CRUISE_INTERVAL_MINUTES,
         metals_watch_interval=settings.METALS_WATCH_INTERVAL_SECONDS,
+        premium_cruise_interval=settings.PREMIUM_CRUISE_INTERVAL_MINUTES,
+        premium_watch_interval=settings.PREMIUM_WATCH_INTERVAL_SECONDS,
         thread_pool_size=settings.THREAD_POOL_SIZE,
     )
 

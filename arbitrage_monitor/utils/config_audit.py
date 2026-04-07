@@ -79,3 +79,18 @@ def flatten_futures_threshold_values(rows: list[dict[str, Any]]) -> dict[str, An
             row["annualized_discount_threshold"]
         )
     return payload
+
+
+def flatten_premium_threshold_values(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for row in rows:
+        asset_group = row["asset_group"]
+        payload[f"PREMIUM_THRESHOLD.{asset_group}.upper"] = float(row["upper"])
+        payload[f"PREMIUM_THRESHOLD.{asset_group}.lower"] = float(row["lower"])
+        payload[f"PREMIUM_THRESHOLD.{asset_group}.upper_enabled"] = bool(
+            row.get("upper_enabled", True)
+        )
+        payload[f"PREMIUM_THRESHOLD.{asset_group}.lower_enabled"] = bool(
+            row.get("lower_enabled", True)
+        )
+    return payload

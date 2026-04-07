@@ -4,6 +4,7 @@ import streamlit as st
 from config.settings import settings
 from utils.config_audit import (
     flatten_futures_threshold_values,
+    flatten_premium_threshold_values,
     flatten_threshold_values,
     record_config_changes,
 )
@@ -19,6 +20,11 @@ from utils.metals_config import (
     migrate_legacy_metals_thresholds,
     reset_metals_thresholds,
     save_metals_thresholds,
+)
+from utils.premium_config import (
+    get_premium_config_rows,
+    reset_premium_thresholds,
+    save_premium_thresholds,
 )
 from utils.runtime_config import apply_runtime_updates, get_gui_config_values, write_env_updates
 
@@ -99,6 +105,19 @@ METALS_RUNTIME_FIELDS = [
     "METALS_AFTERNOON_END",
     "METALS_NIGHT_START",
     "METALS_NIGHT_END",
+]
+PREMIUM_RUNTIME_FIELDS = [
+    "ENABLE_PREMIUM_MONITOR",
+    "ENABLE_PREMIUM_CRUISE",
+    "ENABLE_PREMIUM_WATCH",
+    "PREMIUM_CRUISE_INTERVAL_MINUTES",
+    "PREMIUM_WATCH_INTERVAL_SECONDS",
+    "PREMIUM_MORNING_START",
+    "PREMIUM_MORNING_END",
+    "PREMIUM_AFTERNOON_START",
+    "PREMIUM_AFTERNOON_END",
+    "PREMIUM_NIGHT_START",
+    "PREMIUM_NIGHT_END",
 ]
 SYSTEM_FIELDS = ["COOLDOWN_MINUTES", "DATA_RETENTION_DAYS"]
 
@@ -327,6 +346,122 @@ with st.expander("股指期货", expanded=True):
 
     st.markdown("**最近变更**")
     render_history_table(prefixes=("ENABLE_FUTURES_", "FUTURES_", "FUTURES_THRESHOLD."))
+
+
+with st.expander("期现溢价", expanded=False):
+    st.caption("BTC 与 A50 的监控开关、时钟和分资产上下阈值都在这里。")
+    premium_rows = get_premium_config_rows()
+    premium_before = flatten_premium_threshold_values(premium_rows)
+    with st.form("premium_module_form"):
+        st.markdown("**模块开关**")
+        col1, col2, col3 = st.columns(3)
+        enable_premium = col1.toggle("启用期现溢价监控", value=current["ENABLE_PREMIUM_MONITOR"])
+        enable_premium_cruise = col2.checkbox("启用巡航", value=current["ENABLE_PREMIUM_CRUISE"])
+        enable_premium_watch = col3.checkbox("启用盯盘", value=current["ENABLE_PREMIUM_WATCH"])
+
+        st.markdown("**运行频率**")
+        col1, col2 = st.columns(2)
+        premium_cruise = col1.number_input(
+            "巡航间隔 (分钟)",
+            min_value=1,
+            max_value=1440,
+            value=int(current["PREMIUM_CRUISE_INTERVAL_MINUTES"]),
+            step=1,
+        )
+        premium_watch = col2.number_input(
+            "盯盘间隔 (秒)",
+            min_value=5,
+            max_value=3600,
+            value=int(current["PREMIUM_WATCH_INTERVAL_SECONDS"]),
+            step=5,
+        )
+
+        premium_windows = render_time_window("PREMIUM", current)
+
+        st.markdown("**分资产阈值**")
+        st.write("资产组 | 名称 | 上阈值启用 | 上阈值(%) | 下阈值启用 | 下阈值(%)")
+        premium_threshold_updates: dict[str, dict[str, float | bool]] = {}
+        for row in premium_rows:
+            cols = st.columns([0.8, 1.2, 0.8, 1, 0.8, 1])
+            cols[0].markdown(f"`{row['asset_group']}`")
+            cols[1].markdown(row["name"])
+            upper_enabled = cols[2].checkbox(
+                f"{row['asset_group']}_upper_enabled",
+                value=bool(row.get("upper_enabled", True)),
+                label_visibility="collapsed",
+                key=f"premium_upper_enabled_{row['asset_group']}",
+            )
+            upper = cols[3].number_input(
+                f"{row['asset_group']}_upper",
+                value=float(row["upper"]),
+                step=0.1,
+                label_visibility="collapsed",
+                key=f"premium_upper_{row['asset_group']}",
+                disabled=not upper_enabled,
+            )
+            lower_enabled = cols[4].checkbox(
+                f"{row['asset_group']}_lower_enabled",
+                value=bool(row.get("lower_enabled", True)),
+                label_visibility="collapsed",
+                key=f"premium_lower_enabled_{row['asset_group']}",
+            )
+            lower = cols[5].number_input(
+                f"{row['asset_group']}_lower",
+                value=float(row["lower"]),
+                step=0.1,
+                label_visibility="collapsed",
+                key=f"premium_lower_{row['asset_group']}",
+                disabled=not lower_enabled,
+            )
+            premium_threshold_updates[row["asset_group"]] = {
+                "upper": float(upper),
+                "lower": float(lower),
+                "upper_enabled": bool(upper_enabled),
+                "lower_enabled": bool(lower_enabled),
+            }
+
+        save_premium = st.form_submit_button("保存期现溢价设置", use_container_width=True)
+        reset_premium = st.form_submit_button("恢复期现溢价默认值")
+
+    if save_premium:
+        premium_runtime_updates = {
+            "ENABLE_PREMIUM_MONITOR": enable_premium,
+            "ENABLE_PREMIUM_CRUISE": enable_premium_cruise,
+            "ENABLE_PREMIUM_WATCH": enable_premium_watch,
+            "PREMIUM_CRUISE_INTERVAL_MINUTES": int(premium_cruise),
+            "PREMIUM_WATCH_INTERVAL_SECONDS": int(premium_watch),
+        }
+        premium_runtime_updates.update(premium_windows)
+        try:
+            save_runtime_module(premium_runtime_updates, PREMIUM_RUNTIME_FIELDS, success_text="期现溢价运行配置")
+            path = save_premium_thresholds(premium_threshold_updates)
+            after_rows = get_premium_config_rows()
+            record_config_changes(
+                premium_before,
+                flatten_premium_threshold_values(after_rows),
+                source="dashboard_gui",
+                destination="local_override" if path.name.endswith(".local.json") else "shared_baseline",
+            )
+            st.success(f"期现溢价阈值已保存到 {path.name}。")
+        except Exception as exc:
+            st.error(f"保存期现溢价设置失败：{exc}")
+
+    if reset_premium:
+        try:
+            path = reset_premium_thresholds()
+            after_rows = get_premium_config_rows()
+            record_config_changes(
+                premium_before,
+                flatten_premium_threshold_values(after_rows),
+                source="dashboard_gui",
+                destination="shared_baseline",
+            )
+            st.success(f"期现溢价阈值已恢复为共享基线，当前使用 {path.name}。")
+        except Exception as exc:
+            st.error(f"恢复期现溢价阈值失败：{exc}")
+
+    st.markdown("**最近变更**")
+    render_history_table(prefixes=("ENABLE_PREMIUM_", "PREMIUM_", "PREMIUM_THRESHOLD."))
 
 
 with st.expander("可转债", expanded=False):

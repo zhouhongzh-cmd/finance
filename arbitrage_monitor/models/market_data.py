@@ -82,3 +82,20 @@ class MetalArbitrageData(BaseMarketData):
     for_time: str = ""
     for_date: str = ""
     used_api_cny_quote: bool = False
+
+
+@dataclass
+class PremiumArbitrageData(BaseMarketData):
+    """期现溢价快照，一条记录对应一个现货/期货对。"""
+    asset_group: str
+    spot_symbol: str
+    spot_name: str
+    spot_price: float
+    future_symbol: str
+    future_name: str
+    future_price: float
+    premium: float
+    premium_rate: float
+    state: str
+    source_spot: str = ""
+    source_future: str = ""

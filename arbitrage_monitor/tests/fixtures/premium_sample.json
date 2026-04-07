@@ -1,0 +1,46 @@
+[
+  {
+    "asset_group": "BTC",
+    "spot_symbol": "BTC-USD",
+    "spot_name": "BTC现货",
+    "spot_price": 68102.59,
+    "future_symbol": "BTC=F",
+    "future_name": "BTC期货",
+    "future_price": 68025.0,
+    "source_spot": "fixture",
+    "source_future": "fixture"
+  },
+  {
+    "asset_group": "A50",
+    "spot_symbol": "XIN9.FGI",
+    "spot_name": "A50现货",
+    "spot_price": 14529.54,
+    "future_symbol": "CN00Y",
+    "future_name": "A50期指当月连续",
+    "future_price": 14422.0,
+    "source_spot": "fixture",
+    "source_future": "fixture"
+  },
+  {
+    "asset_group": "A50",
+    "spot_symbol": "XIN9.FGI",
+    "spot_name": "A50现货",
+    "spot_price": 14529.54,
+    "future_symbol": "CN26K",
+    "future_name": "A50期指2605",
+    "future_price": 14391.0,
+    "source_spot": "fixture",
+    "source_future": "fixture"
+  },
+  {
+    "asset_group": "A50",
+    "spot_symbol": "XIN9.FGI",
+    "spot_name": "A50现货",
+    "spot_price": 14529.54,
+    "future_symbol": "CN26U",
+    "future_name": "A50期指2609",
+    "future_price": null,
+    "source_spot": "fixture",
+    "source_future": "fixture"
+  }
+]
