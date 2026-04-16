@@ -18,30 +18,28 @@ class MetalsArbitrageStrategy(BaseStrategy):
 
         for item in data:
             threshold = get_effective_metal_threshold(item.metal_symbol)
-            upper = float(threshold["upper"])
-            lower = float(threshold["lower"])
+            upper_threshold = float(threshold["upper"])
+            lower_threshold = float(threshold["lower"])
             upper_enabled = bool(threshold.get("upper_enabled", True))
             lower_enabled = bool(threshold.get("lower_enabled", True))
             spread_pct = item.spread_pct
 
-            triggered = (upper_enabled and spread_pct >= upper) or (
-                lower_enabled and spread_pct <= lower
-            )
-            if not triggered:
+            direction = ""
+            severity_base = 0.0
+            if upper_enabled and spread_pct >= upper_threshold:
+                direction = "升水"
+                severity_base = upper_threshold
+            elif lower_enabled and spread_pct <= lower_threshold:
+                direction = "贴水"
+                severity_base = abs(lower_threshold)
+            if not direction:
                 continue
 
-            active_bounds = []
-            if upper_enabled:
-                active_bounds.append(abs(upper))
-            if lower_enabled:
-                active_bounds.append(abs(lower))
-            severity_base = max(active_bounds) if active_bounds else 0.0
             level = (
                 "CRITICAL"
                 if severity_base > 0 and abs(spread_pct) >= (severity_base * 1.5)
                 else "WARNING"
             )
-            direction = "国内溢价" if spread_pct >= 0 else "国内折价"
             message = (
                 f"金属套利阈值触发\n"
                 f"标的：{item.metal_name} vs {item.benchmark_display_name}\n"
@@ -50,10 +48,10 @@ class MetalsArbitrageStrategy(BaseStrategy):
                 f"外盘美元价：{item.for_price_usd:.4f}\n"
                 f"外盘人民币价：{item.for_price_cny:.2f} {item.domestic_unit}\n"
                 f"价差：{item.spread:.2f}\n"
-                f"价差百分比：{item.spread_pct:.2f}%\n"
+                f"价差百分比：{abs(item.spread_pct):.2f}%\n"
                 f"隐含汇率：{item.implied_rate:.4f}\n"
-                f"阈值区间：[{lower:.2f}%, {upper:.2f}%]\n"
-                f"下阈值：{'启用' if lower_enabled else '关闭'} / 上阈值：{'启用' if upper_enabled else '关闭'}"
+                f"升水阈值：{'启用' if upper_enabled else '关闭'} / {upper_threshold:.2f}%\n"
+                f"贴水阈值：{'启用' if lower_enabled else '关闭'} / {abs(lower_threshold):.2f}%"
             )
             signals.append(
                 Signal(

@@ -1,59 +1,99 @@
 {
   "AU0": {
+    "contango_threshold": 1.0,
+    "backwardation_threshold": 1.0,
+    "contango_enabled": true,
+    "backwardation_enabled": true,
     "upper": 1.0,
     "lower": -1.0,
     "upper_enabled": true,
     "lower_enabled": true
   },
   "AG0": {
+    "contango_threshold": 20.0,
+    "backwardation_threshold": 20.0,
+    "contango_enabled": true,
+    "backwardation_enabled": true,
     "upper": 20.0,
     "lower": -20.0,
     "upper_enabled": true,
     "lower_enabled": true
   },
   "PT0": {
+    "contango_threshold": 2.0,
+    "backwardation_threshold": 2.0,
+    "contango_enabled": true,
+    "backwardation_enabled": true,
     "upper": 2.0,
     "lower": -2.0,
     "upper_enabled": true,
     "lower_enabled": true
   },
   "PD0": {
+    "contango_threshold": 2.0,
+    "backwardation_threshold": 2.0,
+    "contango_enabled": true,
+    "backwardation_enabled": true,
     "upper": 2.0,
     "lower": -2.0,
     "upper_enabled": true,
     "lower_enabled": true
   },
   "CU0": {
+    "contango_threshold": 1.5,
+    "backwardation_threshold": 1.5,
+    "contango_enabled": true,
+    "backwardation_enabled": true,
     "upper": 1.5,
     "lower": -1.5,
     "upper_enabled": true,
     "lower_enabled": true
   },
   "AL0": {
+    "contango_threshold": 1.5,
+    "backwardation_threshold": 1.5,
+    "contango_enabled": true,
+    "backwardation_enabled": true,
     "upper": 1.5,
     "lower": -1.5,
     "upper_enabled": true,
     "lower_enabled": true
   },
   "ZN0": {
+    "contango_threshold": 1.5,
+    "backwardation_threshold": 1.5,
+    "contango_enabled": true,
+    "backwardation_enabled": true,
     "upper": 1.5,
     "lower": -1.5,
     "upper_enabled": true,
     "lower_enabled": true
   },
   "PB0": {
+    "contango_threshold": 1.5,
+    "backwardation_threshold": 1.5,
+    "contango_enabled": true,
+    "backwardation_enabled": true,
     "upper": 1.5,
     "lower": -1.5,
     "upper_enabled": true,
     "lower_enabled": true
   },
   "NI0": {
+    "contango_threshold": 2.0,
+    "backwardation_threshold": 2.0,
+    "contango_enabled": true,
+    "backwardation_enabled": true,
     "upper": 2.0,
     "lower": -2.0,
     "upper_enabled": true,
     "lower_enabled": true
   },
   "SN0": {
+    "contango_threshold": 2.0,
+    "backwardation_threshold": 2.0,
+    "contango_enabled": true,
+    "backwardation_enabled": true,
     "upper": 2.0,
     "lower": -2.0,
     "upper_enabled": true,

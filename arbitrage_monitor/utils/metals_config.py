@@ -44,13 +44,25 @@ def _diff_thresholds(
         current_values = current.get(symbol)
         if current_values is None:
             continue
+        legacy_upper = float(
+            legacy_values.get("upper", legacy_values.get("contango_threshold", 0.0))
+        )
+        legacy_lower = float(
+            legacy_values.get("lower", -float(legacy_values.get("backwardation_threshold", 0.0)))
+        )
+        legacy_upper_enabled = bool(
+            legacy_values.get("upper_enabled", legacy_values.get("contango_enabled", True))
+        )
+        legacy_lower_enabled = bool(
+            legacy_values.get("lower_enabled", legacy_values.get("backwardation_enabled", True))
+        )
         if (
-            float(current_values["upper"]) == float(legacy_values["upper"])
-            and float(current_values["lower"]) == float(legacy_values["lower"])
+            float(current_values["upper"]) == abs(legacy_upper)
+            and float(current_values["lower"]) == -abs(legacy_lower)
             and bool(current_values.get("upper_enabled", True))
-            == bool(legacy_values.get("upper_enabled", True))
+            == legacy_upper_enabled
             and bool(current_values.get("lower_enabled", True))
-            == bool(legacy_values.get("lower_enabled", True))
+            == legacy_lower_enabled
         ):
             continue
         rows.append(
@@ -61,13 +73,39 @@ def _diff_thresholds(
                 "current_lower": float(current_values["lower"]),
                 "current_upper_enabled": bool(current_values.get("upper_enabled", True)),
                 "current_lower_enabled": bool(current_values.get("lower_enabled", True)),
-                "legacy_upper": float(legacy_values["upper"]),
-                "legacy_lower": float(legacy_values["lower"]),
-                "legacy_upper_enabled": bool(legacy_values.get("upper_enabled", True)),
-                "legacy_lower_enabled": bool(legacy_values.get("lower_enabled", True)),
+                "legacy_upper": legacy_upper,
+                "legacy_lower": legacy_lower,
+                "legacy_upper_enabled": legacy_upper_enabled,
+                "legacy_lower_enabled": legacy_lower_enabled,
             }
         )
     return rows
+
+
+def _with_legacy_aliases(values: dict[str, float | bool]) -> dict[str, float | bool]:
+    upper = abs(float(values["upper"]))
+    lower = -abs(float(values["lower"]))
+    upper_enabled = bool(values.get("upper_enabled", True))
+    lower_enabled = bool(values.get("lower_enabled", True))
+    return {
+        "upper": upper,
+        "lower": lower,
+        "upper_enabled": upper_enabled,
+        "lower_enabled": lower_enabled,
+        "contango_threshold": upper,
+        "backwardation_threshold": abs(lower),
+        "contango_enabled": upper_enabled,
+        "backwardation_enabled": lower_enabled,
+    }
+
+
+def _serialize_thresholds(
+    thresholds: dict[str, dict[str, float | bool]]
+) -> dict[str, dict[str, float | bool]]:
+    return {
+        symbol: _with_legacy_aliases(values)
+        for symbol, values in thresholds.items()
+    }
 
 
 def _normalize_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[str, float | bool]]:
@@ -80,13 +118,23 @@ def _normalize_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[str, flo
     for symbol, values in raw.items():
         if symbol not in normalized or not isinstance(values, dict):
             continue
-        upper = values.get("upper", normalized[symbol]["upper"])
-        lower = values.get("lower", normalized[symbol]["lower"])
+        upper = values.get(
+            "upper",
+            values.get("contango_threshold", normalized[symbol]["upper"]),
+        )
+        lower = values.get(
+            "lower",
+            values.get("backwardation_threshold", normalized[symbol]["lower"]),
+        )
         normalized[symbol] = {
-            "upper": float(upper),
-            "lower": float(lower),
-            "upper_enabled": bool(values.get("upper_enabled", normalized[symbol]["upper_enabled"])),
-            "lower_enabled": bool(values.get("lower_enabled", normalized[symbol]["lower_enabled"])),
+            "upper": abs(float(upper)),
+            "lower": -abs(float(lower)),
+            "upper_enabled": bool(
+                values.get("upper_enabled", values.get("contango_enabled", normalized[symbol]["upper_enabled"]))
+            ),
+            "lower_enabled": bool(
+                values.get("lower_enabled", values.get("backwardation_enabled", normalized[symbol]["lower_enabled"]))
+            ),
         }
 
     return normalized
@@ -94,7 +142,7 @@ def _normalize_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[str, flo
 
 def _normalize_local_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[str, float | bool]]:
     defaults = get_default_metals_thresholds()
-    normalized: dict[str, dict[str, float]] = {}
+    normalized: dict[str, dict[str, float | bool]] = {}
 
     if not raw:
         return normalized
@@ -103,13 +151,22 @@ def _normalize_local_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[st
         if symbol not in defaults or not isinstance(values, dict):
             continue
         normalized[symbol] = {
-            "upper": float(values.get("upper", defaults[symbol]["upper"])),
-            "lower": float(values.get("lower", defaults[symbol]["lower"])),
+            "upper": abs(
+                float(values.get("upper", values.get("contango_threshold", defaults[symbol]["upper"])))
+            ),
+            "lower": -abs(
+                float(
+                    values.get(
+                        "lower",
+                        values.get("backwardation_threshold", defaults[symbol]["lower"]),
+                    )
+                )
+            ),
             "upper_enabled": bool(
-                values.get("upper_enabled", defaults[symbol]["upper_enabled"])
+                values.get("upper_enabled", values.get("contango_enabled", defaults[symbol]["upper_enabled"]))
             ),
             "lower_enabled": bool(
-                values.get("lower_enabled", defaults[symbol]["lower_enabled"])
+                values.get("lower_enabled", values.get("backwardation_enabled", defaults[symbol]["lower_enabled"]))
             ),
         }
 
@@ -129,26 +186,28 @@ def load_metals_thresholds(force_reload: bool = False) -> dict[str, dict[str, fl
             defaults = _normalize_thresholds(None)
             shared_path.parent.mkdir(parents=True, exist_ok=True)
             shared_path.write_text(
-                json.dumps(defaults, ensure_ascii=False, indent=2) + "\n",
+                json.dumps(_serialize_thresholds(defaults), ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
-            _threshold_cache = defaults
+            _threshold_cache = _serialize_thresholds(defaults)
             return deepcopy(_threshold_cache)
 
         shared_payload = _load_threshold_payload(shared_path)
         shared_thresholds = _normalize_thresholds(shared_payload)
-        if shared_payload != shared_thresholds:
+        serialized_shared = _serialize_thresholds(shared_thresholds)
+        if shared_payload != serialized_shared:
             shared_path.write_text(
-                json.dumps(shared_thresholds, ensure_ascii=False, indent=2) + "\n",
+                json.dumps(serialized_shared, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
 
         local_path = get_local_metals_thresholds_path()
         local_payload = _load_threshold_payload(local_path) if local_path.exists() else None
         local_thresholds = _normalize_local_thresholds(local_payload)
-        if local_payload is not None and local_payload != local_thresholds:
+        serialized_local = _serialize_thresholds(local_thresholds)
+        if local_payload is not None and local_payload != serialized_local:
             local_path.write_text(
-                json.dumps(local_thresholds, ensure_ascii=False, indent=2) + "\n",
+                json.dumps(serialized_local, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
 
@@ -162,7 +221,7 @@ def load_metals_thresholds(force_reload: bool = False) -> dict[str, dict[str, fl
                     "lower_enabled": bool(values["lower_enabled"]),
                 }
 
-        _threshold_cache = effective
+        _threshold_cache = _serialize_thresholds(effective)
         return deepcopy(_threshold_cache)
 
 
@@ -184,7 +243,7 @@ def save_metals_thresholds(thresholds: dict[str, dict[str, float | bool]]) -> Pa
         path = get_local_metals_thresholds_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            json.dumps(normalized, ensure_ascii=False, indent=2) + "\n",
+            json.dumps(_serialize_thresholds(normalized), ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         _threshold_cache = None
@@ -252,8 +311,15 @@ def reset_metals_thresholds() -> Path:
 def get_effective_metal_threshold(symbol: str) -> dict[str, float | bool]:
     thresholds = load_metals_thresholds()
     if symbol in thresholds:
-        return thresholds[symbol]
-    return {"upper": 2.0, "lower": -2.0, "upper_enabled": True, "lower_enabled": True}
+        current = thresholds[symbol]
+    else:
+        current = {
+            "upper": 2.0,
+            "lower": -2.0,
+            "upper_enabled": True,
+            "lower_enabled": True,
+        }
+    return _with_legacy_aliases(current)
 
 
 def get_metals_config_rows() -> list[dict[str, Any]]:
@@ -266,10 +332,7 @@ def get_metals_config_rows() -> list[dict[str, Any]]:
                 "symbol": symbol,
                 "name": config["name"],
                 "category": config["category"],
-                "upper": float(current["upper"]),
-                "lower": float(current["lower"]),
-                "upper_enabled": bool(current.get("upper_enabled", True)),
-                "lower_enabled": bool(current.get("lower_enabled", True)),
+                **_with_legacy_aliases(current),
             }
         )
     return rows

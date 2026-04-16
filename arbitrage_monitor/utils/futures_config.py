@@ -42,18 +42,67 @@ def _load_threshold_payload(path: Path) -> dict[str, Any] | None:
     return payload
 
 
-def _build_default_thresholds_from_runtime(runtime_payload: dict[str, Any]) -> dict[str, dict[str, float | bool]]:
+def _with_aliases(values: dict[str, float | bool]) -> dict[str, float | bool]:
+    upper = float(values["upper"])
+    lower = float(values["lower"])
+    upper_enabled = bool(values.get("upper_enabled", True))
+    lower_enabled = bool(values.get("lower_enabled", True))
+    annualized_upper = float(values["annualized_upper"])
+    annualized_lower = float(values["annualized_lower"])
+    annualized_upper_enabled = bool(values.get("annualized_upper_enabled", upper_enabled))
+    annualized_lower_enabled = bool(values.get("annualized_lower_enabled", lower_enabled))
+    return {
+        "upper_enabled": upper_enabled,
+        "upper": upper,
+        "annualized_upper_enabled": annualized_upper_enabled,
+        "annualized_upper": annualized_upper,
+        "lower_enabled": lower_enabled,
+        "lower": lower,
+        "annualized_lower_enabled": annualized_lower_enabled,
+        "annualized_lower": annualized_lower,
+        "contango_enabled": upper_enabled,
+        "contango_threshold": upper,
+        "annualized_contango_enabled": annualized_upper_enabled,
+        "annualized_contango_threshold": annualized_upper,
+        "backwardation_enabled": lower_enabled,
+        "backwardation_threshold": abs(lower),
+        "annualized_backwardation_enabled": annualized_lower_enabled,
+        "annualized_backwardation_threshold": abs(annualized_lower),
+    }
+
+
+def _serialize_thresholds(
+    thresholds: dict[str, dict[str, float | bool]]
+) -> dict[str, dict[str, float | bool]]:
+    return {product: _with_aliases(values) for product, values in thresholds.items()}
+
+
+def _build_default_thresholds_from_runtime(
+    runtime_payload: dict[str, Any],
+) -> dict[str, dict[str, float | bool]]:
     enabled = bool(runtime_payload.get("ENABLE_FUTURES_DISCOUNT_PERCENT_THRESHOLD", True))
-    percent = float(runtime_payload.get("FUTURES_DISCOUNT_PERCENT_THRESHOLD", settings.FUTURES_DISCOUNT_PERCENT_THRESHOLD))
-    annualized = float(runtime_payload.get("FUTURES_DISCOUNT_RATE_THRESHOLD", settings.FUTURES_DISCOUNT_RATE_THRESHOLD))
+    percent = float(
+        runtime_payload.get(
+            "FUTURES_DISCOUNT_PERCENT_THRESHOLD",
+            settings.FUTURES_DISCOUNT_PERCENT_THRESHOLD,
+        )
+    )
+    annualized = float(
+        runtime_payload.get(
+            "FUTURES_DISCOUNT_RATE_THRESHOLD",
+            settings.FUTURES_DISCOUNT_RATE_THRESHOLD,
+        )
+    )
     return {
         product: {
-            "backwardation_enabled": enabled,
-            "backwardation_threshold": percent,
-            "annualized_backwardation_threshold": annualized,
-            "contango_enabled": enabled,
-            "contango_threshold": percent,
-            "annualized_contango_threshold": annualized,
+            "upper_enabled": enabled,
+            "upper": percent,
+            "annualized_upper_enabled": enabled,
+            "annualized_upper": annualized,
+            "lower_enabled": enabled,
+            "lower": -percent,
+            "annualized_lower_enabled": enabled,
+            "annualized_lower": -annualized,
         }
         for product in FUTURES_PRODUCTS
     }
@@ -70,49 +119,78 @@ def _normalize_thresholds(
     for product, values in raw.items():
         if product not in normalized or not isinstance(values, dict):
             continue
-        normalized[product] = {
-            "backwardation_enabled": bool(
-                values.get(
-                    "backwardation_enabled",
-                    values.get("enabled", normalized[product]["backwardation_enabled"]),
-                )
-            ),
-            "backwardation_threshold": float(
+        default = normalized[product]
+        upper = float(
+            values.get(
+                "upper",
                 values.get(
                     "backwardation_threshold",
+                    values.get("discount_percent_threshold", default["upper"]),
+                ),
+            )
+        )
+        lower = float(
+            values.get(
+                "lower",
+                -abs(
                     values.get(
-                        "discount_percent_threshold",
-                        normalized[product]["backwardation_threshold"],
-                    ),
-                )
-            ),
-            "annualized_backwardation_threshold": float(
+                        "contango_threshold",
+                        default["lower"],
+                    )
+                ),
+            )
+        )
+        annualized_upper = float(
+            values.get(
+                "annualized_upper",
                 values.get(
                     "annualized_backwardation_threshold",
+                    values.get("annualized_discount_threshold", default["annualized_upper"]),
+                ),
+            )
+        )
+        annualized_lower = float(
+            values.get(
+                "annualized_lower",
+                -abs(
                     values.get(
-                        "annualized_discount_threshold",
-                        normalized[product]["annualized_backwardation_threshold"],
-                    ),
-                )
-            ),
-            "contango_enabled": bool(
+                        "annualized_contango_threshold",
+                        default["annualized_lower"],
+                    )
+                ),
+            )
+        )
+        upper_enabled = bool(
+            values.get(
+                "upper_enabled",
+                values.get(
+                    "backwardation_enabled",
+                    values.get("enabled", default["upper_enabled"]),
+                ),
+            )
+        )
+        lower_enabled = bool(
+            values.get(
+                "lower_enabled",
                 values.get(
                     "contango_enabled",
-                    values.get("enabled", normalized[product]["contango_enabled"]),
-                )
+                    values.get("enabled", default["lower_enabled"]),
+                ),
+            )
+        )
+        normalized[product] = {
+            "upper_enabled": upper_enabled,
+            "upper": abs(upper),
+            "annualized_upper_enabled": bool(
+                values.get("annualized_upper_enabled", values.get("annualized_contango_enabled", upper_enabled))
             ),
-            "contango_threshold": float(
-                values.get(
-                    "contango_threshold",
-                    normalized[product]["contango_threshold"],
-                )
+            "annualized_upper": abs(annualized_upper),
+            "lower_enabled": lower_enabled,
+            "lower": -abs(lower),
+            "annualized_lower_enabled": bool(
+                values.get("annualized_lower_enabled", values.get("annualized_backwardation_enabled", lower_enabled))
             ),
-            "annualized_contango_threshold": float(
-                values.get(
-                    "annualized_contango_threshold",
-                    normalized[product]["annualized_contango_threshold"],
-                )
-            ),
+            "annualized_lower": -abs(annualized_lower),
         }
     return normalized
 
@@ -123,50 +201,7 @@ def _normalize_local_thresholds(
 ) -> dict[str, dict[str, float | bool]]:
     if not raw:
         return {}
-
-    normalized: dict[str, dict[str, float | bool]] = {}
-    for product, values in raw.items():
-        if product not in defaults or not isinstance(values, dict):
-            continue
-        normalized[product] = {
-            "backwardation_enabled": bool(
-                values.get(
-                    "backwardation_enabled",
-                    values.get("enabled", defaults[product]["backwardation_enabled"]),
-                )
-            ),
-            "backwardation_threshold": float(
-                values.get(
-                    "backwardation_threshold",
-                    values.get(
-                        "discount_percent_threshold",
-                        defaults[product]["backwardation_threshold"],
-                    ),
-                )
-            ),
-            "annualized_backwardation_threshold": float(
-                values.get(
-                    "annualized_backwardation_threshold",
-                    values.get(
-                        "annualized_discount_threshold",
-                        defaults[product]["annualized_backwardation_threshold"],
-                    ),
-                )
-            ),
-            "contango_enabled": bool(
-                values.get("contango_enabled", defaults[product]["contango_enabled"])
-            ),
-            "contango_threshold": float(
-                values.get("contango_threshold", defaults[product]["contango_threshold"])
-            ),
-            "annualized_contango_threshold": float(
-                values.get(
-                    "annualized_contango_threshold",
-                    defaults[product]["annualized_contango_threshold"],
-                )
-            ),
-        }
-    return normalized
+    return _normalize_thresholds(raw, defaults)
 
 
 def _build_legacy_local_overrides(
@@ -202,14 +237,17 @@ def load_futures_thresholds(force_reload: bool = False) -> dict[str, dict[str, f
         if _threshold_cache is not None and not force_reload:
             return deepcopy(_threshold_cache)
 
-        shared_defaults = _build_default_thresholds_from_runtime(load_shared_runtime_config(settings))
+        shared_defaults = _build_default_thresholds_from_runtime(
+            load_shared_runtime_config(settings)
+        )
         shared_path = get_futures_thresholds_path()
         shared_payload = _load_threshold_payload(shared_path) if shared_path.exists() else None
         shared_thresholds = _normalize_thresholds(shared_payload, shared_defaults)
-        if not shared_path.exists() or shared_payload != shared_thresholds:
+        serialized_shared = _serialize_thresholds(shared_thresholds)
+        if not shared_path.exists() or shared_payload != serialized_shared:
             shared_path.parent.mkdir(parents=True, exist_ok=True)
             shared_path.write_text(
-                json.dumps(shared_thresholds, ensure_ascii=False, indent=2) + "\n",
+                json.dumps(serialized_shared, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
 
@@ -217,9 +255,10 @@ def load_futures_thresholds(force_reload: bool = False) -> dict[str, dict[str, f
         local_payload = _load_threshold_payload(local_path) if local_path.exists() else None
         if local_payload is not None:
             local_thresholds = _normalize_local_thresholds(local_payload, shared_thresholds)
-            if local_payload != local_thresholds:
+            serialized_local = _serialize_thresholds(local_thresholds)
+            if local_payload != serialized_local:
                 local_path.write_text(
-                    json.dumps(local_thresholds, ensure_ascii=False, indent=2) + "\n",
+                    json.dumps(serialized_local, ensure_ascii=False, indent=2) + "\n",
                     encoding="utf-8",
                 )
         else:
@@ -229,7 +268,7 @@ def load_futures_thresholds(force_reload: bool = False) -> dict[str, dict[str, f
         for product, values in local_thresholds.items():
             effective[product] = values
 
-        _threshold_cache = effective
+        _threshold_cache = _serialize_thresholds(effective)
         return deepcopy(_threshold_cache)
 
 
@@ -250,7 +289,7 @@ def save_futures_thresholds(thresholds: dict[str, dict[str, float | bool]]) -> P
         path = get_local_futures_thresholds_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            json.dumps(local_only, ensure_ascii=False, indent=2) + "\n",
+            json.dumps(_serialize_thresholds(local_only), ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         _threshold_cache = None
@@ -275,17 +314,23 @@ def get_effective_futures_threshold(product_code: str) -> dict[str, float | bool
     thresholds = load_futures_thresholds()
     if normalized in thresholds:
         return thresholds[normalized]
-    defaults = _build_default_thresholds_from_runtime(load_shared_runtime_config(settings))
+    defaults = _serialize_thresholds(
+        _build_default_thresholds_from_runtime(load_shared_runtime_config(settings))
+    )
     return defaults.get(
         normalized,
-        {
-            "backwardation_enabled": False,
-            "backwardation_threshold": 1.0,
-            "annualized_backwardation_threshold": 8.0,
-            "contango_enabled": False,
-            "contango_threshold": 1.0,
-            "annualized_contango_threshold": 8.0,
-        },
+        _with_aliases(
+            {
+                "upper_enabled": False,
+                "upper": 1.0,
+                "annualized_upper_enabled": False,
+                "annualized_upper": 8.0,
+                "lower_enabled": False,
+                "lower": -1.0,
+                "annualized_lower_enabled": False,
+                "annualized_lower": -8.0,
+            }
+        ),
     )
 
 
@@ -295,20 +340,7 @@ def get_futures_config_rows() -> list[dict[str, Any]]:
         {
             "product_code": product,
             "name": FUTURES_PRODUCTS[product],
-            "backwardation_enabled": bool(thresholds[product]["backwardation_enabled"]),
-            "backwardation_threshold": float(thresholds[product]["backwardation_threshold"]),
-            "annualized_backwardation_enabled": bool(
-                thresholds[product]["backwardation_enabled"]
-            ),
-            "annualized_backwardation_threshold": float(
-                thresholds[product]["annualized_backwardation_threshold"]
-            ),
-            "contango_enabled": bool(thresholds[product]["contango_enabled"]),
-            "contango_threshold": float(thresholds[product]["contango_threshold"]),
-            "annualized_contango_enabled": bool(thresholds[product]["contango_enabled"]),
-            "annualized_contango_threshold": float(
-                thresholds[product]["annualized_contango_threshold"]
-            ),
+            **thresholds[product],
         }
         for product in FUTURES_PRODUCTS
     ]

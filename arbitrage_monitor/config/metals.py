@@ -220,8 +220,8 @@ METALS_CONFIG: dict[str, dict[str, Any]] = {
 def get_default_metals_thresholds() -> dict[str, dict[str, float | bool]]:
     return {
         symbol: {
-            "upper": float(item["alert_threshold"]["upper"]),
-            "lower": float(item["alert_threshold"]["lower"]),
+            "upper": abs(float(item["alert_threshold"]["upper"])),
+            "lower": -abs(float(item["alert_threshold"]["lower"])),
             "upper_enabled": True,
             "lower_enabled": True,
         }

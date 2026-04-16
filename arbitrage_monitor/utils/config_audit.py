@@ -58,12 +58,8 @@ def flatten_threshold_values(rows: list[dict[str, Any]]) -> dict[str, Any]:
         symbol = row["symbol"]
         payload[f"METALS_THRESHOLD.{symbol}.upper"] = float(row["upper"])
         payload[f"METALS_THRESHOLD.{symbol}.lower"] = float(row["lower"])
-        payload[f"METALS_THRESHOLD.{symbol}.upper_enabled"] = bool(
-            row.get("upper_enabled", True)
-        )
-        payload[f"METALS_THRESHOLD.{symbol}.lower_enabled"] = bool(
-            row.get("lower_enabled", True)
-        )
+        payload[f"METALS_THRESHOLD.{symbol}.upper_enabled"] = bool(row.get("upper_enabled", True))
+        payload[f"METALS_THRESHOLD.{symbol}.lower_enabled"] = bool(row.get("lower_enabled", True))
     return payload
 
 
@@ -71,24 +67,18 @@ def flatten_futures_threshold_values(rows: list[dict[str, Any]]) -> dict[str, An
     payload: dict[str, Any] = {}
     for row in rows:
         product = row["product_code"]
-        payload[f"FUTURES_THRESHOLD.{product}.backwardation_enabled"] = bool(
-            row["backwardation_enabled"]
+        payload[f"FUTURES_THRESHOLD.{product}.upper_enabled"] = bool(row["upper_enabled"])
+        payload[f"FUTURES_THRESHOLD.{product}.upper"] = float(row["upper"])
+        payload[f"FUTURES_THRESHOLD.{product}.annualized_upper_enabled"] = bool(
+            row["annualized_upper_enabled"]
         )
-        payload[f"FUTURES_THRESHOLD.{product}.backwardation_threshold"] = float(
-            row["backwardation_threshold"]
+        payload[f"FUTURES_THRESHOLD.{product}.annualized_upper"] = float(row["annualized_upper"])
+        payload[f"FUTURES_THRESHOLD.{product}.lower_enabled"] = bool(row["lower_enabled"])
+        payload[f"FUTURES_THRESHOLD.{product}.lower"] = float(row["lower"])
+        payload[f"FUTURES_THRESHOLD.{product}.annualized_lower_enabled"] = bool(
+            row["annualized_lower_enabled"]
         )
-        payload[f"FUTURES_THRESHOLD.{product}.annualized_backwardation_threshold"] = float(
-            row["annualized_backwardation_threshold"]
-        )
-        payload[f"FUTURES_THRESHOLD.{product}.contango_enabled"] = bool(
-            row["contango_enabled"]
-        )
-        payload[f"FUTURES_THRESHOLD.{product}.contango_threshold"] = float(
-            row["contango_threshold"]
-        )
-        payload[f"FUTURES_THRESHOLD.{product}.annualized_contango_threshold"] = float(
-            row["annualized_contango_threshold"]
-        )
+        payload[f"FUTURES_THRESHOLD.{product}.annualized_lower"] = float(row["annualized_lower"])
     return payload
 
 
@@ -96,28 +86,16 @@ def flatten_premium_threshold_values(rows: list[dict[str, Any]]) -> dict[str, An
     payload: dict[str, Any] = {}
     for row in rows:
         asset_group = row["asset_group"]
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.contango_enabled"] = bool(
-            row["contango_enabled"]
+        payload[f"PREMIUM_THRESHOLD.{asset_group}.upper_enabled"] = bool(row["upper_enabled"])
+        payload[f"PREMIUM_THRESHOLD.{asset_group}.upper"] = float(row["upper"])
+        payload[f"PREMIUM_THRESHOLD.{asset_group}.annualized_upper_enabled"] = bool(
+            row["annualized_upper_enabled"]
         )
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.contango_threshold"] = float(
-            row["contango_threshold"]
+        payload[f"PREMIUM_THRESHOLD.{asset_group}.annualized_upper"] = float(row["annualized_upper"])
+        payload[f"PREMIUM_THRESHOLD.{asset_group}.lower_enabled"] = bool(row["lower_enabled"])
+        payload[f"PREMIUM_THRESHOLD.{asset_group}.lower"] = float(row["lower"])
+        payload[f"PREMIUM_THRESHOLD.{asset_group}.annualized_lower_enabled"] = bool(
+            row["annualized_lower_enabled"]
         )
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.annualized_contango_enabled"] = bool(
-            row["annualized_contango_enabled"]
-        )
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.annualized_contango_threshold"] = float(
-            row["annualized_contango_threshold"]
-        )
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.backwardation_enabled"] = bool(
-            row["backwardation_enabled"]
-        )
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.backwardation_threshold"] = float(
-            row["backwardation_threshold"]
-        )
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.annualized_backwardation_enabled"] = bool(
-            row["annualized_backwardation_enabled"]
-        )
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.annualized_backwardation_threshold"] = float(
-            row["annualized_backwardation_threshold"]
-        )
+        payload[f"PREMIUM_THRESHOLD.{asset_group}.annualized_lower"] = float(row["annualized_lower"])
     return payload

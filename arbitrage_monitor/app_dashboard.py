@@ -673,13 +673,19 @@ elif view == "A50 以及加密货币":
         if "days_to_maturity" in history_df.columns:
             annualized_series = history_df.apply(
                 lambda row: (
-                    round(row["premium_rate"] * (365 / max(int(row["days_to_maturity"]), 1)), 4)
+                    round(abs(row["premium_rate"]) * (365 / max(int(row["days_to_maturity"]), 1)), 4)
                     if pd.notna(row["days_to_maturity"])
                     else "N/A"
                 ),
                 axis=1,
             )
             history_df["annualized_premium_rate"] = annualized_series
+        if "state" in history_df.columns:
+            history_df["direction"] = history_df["state"].map(
+                {"contango": "升水", "backwardation": "贴水"}
+            ).fillna(history_df["state"])
+        if "premium_rate" in history_df.columns:
+            history_df["premium_rate"] = history_df["premium_rate"].abs()
         history_df["fetched_at"] = history_df["fetched_at"].dt.strftime("%Y-%m-%d %H:%M:%S")
         st.dataframe(history_df, width="stretch", hide_index=True)
 

@@ -73,12 +73,13 @@ def build_futures_live_tables(
     signal_map = {signal.asset: level_badge(signal.level) for signal in signals}
     rows = []
     for item in data:
-        annualized = item.discount_rate * (365 / max(item.days_to_maturity, 1))
+        normalized_rate = -item.discount_rate
+        annualized = normalized_rate * (365 / max(item.days_to_maturity, 1))
         maturity_date = (datetime.now() + timedelta(days=item.days_to_maturity)).strftime(
             "%Y-%m-%d"
         )
-        direction = "贴水" if item.discount_rate >= 0 else "升水"
-        rate_value = item.discount_rate if item.discount_rate >= 0 else -item.discount_rate
+        direction = "升水" if normalized_rate >= 0 else "贴水"
+        rate_value = normalized_rate if normalized_rate >= 0 else -normalized_rate
         annualized_value = annualized if annualized >= 0 else -annualized
         rows.append(
             {
@@ -186,6 +187,8 @@ def build_premium_live_tables(
             if item.days_to_maturity is not None
             else None
         )
+        premium_magnitude = abs(item.premium_rate)
+        annualized_magnitude = abs(annualized) if annualized is not None else None
         rows.append(
             {
                 "资产组": item.asset_group,
@@ -197,8 +200,8 @@ def build_premium_live_tables(
                 "期货名称": item.future_name,
                 "期货价格": round(item.future_price, 4),
                 "溢价值": round(item.premium, 4),
-                "溢价率(%)": round(item.premium_rate, 4),
-                "年化溢价率(%)": round(annualized, 4) if annualized is not None else "N/A",
+                "溢价率(%)": round(premium_magnitude, 4),
+                "年化溢价率(%)": round(annualized_magnitude, 4) if annualized_magnitude is not None else "N/A",
                 "剩余天数": item.days_to_maturity if item.days_to_maturity is not None else "N/A",
                 "状态": "升水" if item.state == "contango" else "贴水",
                 "现货来源": item.source_spot,

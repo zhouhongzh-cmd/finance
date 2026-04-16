@@ -2532,13 +2532,13 @@ def test_premium_threshold_local_override():
                 {
                     "BTC": {
                         "contango_threshold": 0.5,
-                        "backwardation_threshold": -0.5,
+                        "backwardation_threshold": 0.5,
                         "contango_enabled": True,
                         "backwardation_enabled": True,
                     },
                     "A50": {
                         "contango_threshold": 0.5,
-                        "backwardation_threshold": -0.5,
+                        "backwardation_threshold": 0.5,
                         "contango_enabled": True,
                         "backwardation_enabled": True,
                     },
@@ -2554,7 +2554,7 @@ def test_premium_threshold_local_override():
                 {
                     "BTC": {
                         "contango_threshold": 1.2,
-                        "backwardation_threshold": -1.0,
+                        "backwardation_threshold": 1.0,
                         "contango_enabled": True,
                         "backwardation_enabled": False,
                     }
@@ -2580,7 +2580,7 @@ def test_premium_threshold_local_override():
     if float(btc["contango_threshold"]) != 1.2 or bool(btc["backwardation_enabled"]) is not False:
         print(f"❌ Premium Threshold Override: BTC override mismatch {btc}")
         return False
-    if float(a50["contango_threshold"]) != 0.5 or float(a50["backwardation_threshold"]) != -0.5:
+    if float(a50["contango_threshold"]) != 0.5 or float(a50["backwardation_threshold"]) != 0.5:
         print(f"❌ Premium Threshold Override: A50 shared fallback mismatch {a50}")
         return False
 
