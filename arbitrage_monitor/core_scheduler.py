@@ -231,6 +231,10 @@ def persist_runtime_data(strategy_name: str, data) -> None:
     try:
         if strategy_name == "Futures_Discount_Arbitrage":
             db_manager.save_futures_live_snapshots(data)
+        elif strategy_name == "Convertible_Arbitrage":
+            db_manager.save_convertible_snapshots(data)
+        elif strategy_name == "Sentiment_Heat_and_Risk":
+            db_manager.save_sentiment_snapshots(data)
         elif strategy_name == "Metals_Arbitrage":
             db_manager.save_metal_snapshots(data)
         elif strategy_name == "Premium_Arbitrage":
@@ -668,6 +672,8 @@ def cleanup_old_runtime_data():
         alert_rows = db_manager.purge_alert_history_older_than(retention_days)
         margin_rows = db_manager.purge_futures_margin_snapshots_older_than(retention_days)
         futures_rows = db_manager.purge_futures_live_snapshots_older_than(retention_days)
+        convertible_rows = db_manager.purge_convertible_snapshots_older_than(retention_days)
+        sentiment_rows = db_manager.purge_sentiment_snapshots_older_than(retention_days)
         metals_rows = db_manager.purge_metal_snapshots_older_than(retention_days)
         premium_rows = db_manager.purge_premium_snapshots_older_than(retention_days)
         logger.info(
@@ -676,6 +682,8 @@ def cleanup_old_runtime_data():
             deleted_alert_rows=alert_rows,
             deleted_margin_rows=margin_rows,
             deleted_futures_snapshot_rows=futures_rows,
+            deleted_convertible_snapshot_rows=convertible_rows,
+            deleted_sentiment_snapshot_rows=sentiment_rows,
             deleted_metal_snapshot_rows=metals_rows,
             deleted_premium_snapshot_rows=premium_rows,
         )
