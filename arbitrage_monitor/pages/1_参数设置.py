@@ -411,7 +411,7 @@ with st.expander("股指期货", expanded=True):
 
 
 with st.expander("A50 以及加密货币", expanded=False):
-    st.caption("A50 多合约与 BTC 单合约的监控开关、时钟和双向年化阈值都在这里。")
+    st.caption("A50 保持多合约监控；加密资产池按 Top10 币种展开为永续、当月、次月、近季、次季五类合约桶。")
     premium_rows = get_premium_config_rows()
     premium_before = flatten_premium_threshold_values(premium_rows)
     with st.form("premium_module_form"):
@@ -440,12 +440,12 @@ with st.expander("A50 以及加密货币", expanded=False):
 
         premium_windows = render_time_window("PREMIUM", current)
 
-        st.markdown("**分资产阈值**")
-        premium_threshold_widths = [0.8, 1.2, 0.8, 1, 0.8, 1.1, 0.8, 1, 0.8, 1.1]
+        st.markdown("**A50 阈值**")
+        premium_threshold_widths = [0.9, 1.2, 0.8, 1, 0.8, 1.1, 0.8, 1, 0.8, 1.1]
         render_threshold_header(
             premium_threshold_widths,
             [
-                "资产组",
+                "键",
                 "名称",
                 "升水启用",
                 "升水阈值(%)",
@@ -458,67 +458,162 @@ with st.expander("A50 以及加密货币", expanded=False):
             ],
         )
         premium_threshold_updates: dict[str, dict[str, float | bool]] = {}
-        for row in premium_rows:
+        a50_rows = [row for row in premium_rows if row["market"] == "A50"]
+        crypto_rows = [row for row in premium_rows if row["market"] == "CRYPTO"]
+
+        for row in a50_rows:
             cols = st.columns(premium_threshold_widths)
-            cols[0].markdown(f"`{row['asset_group']}`")
+            threshold_key = row["threshold_key"]
+            cols[0].markdown(f"`{threshold_key}`")
             cols[1].markdown(row["name"])
             upper_enabled = cols[2].checkbox(
-                f"{row['asset_group']}_upper_enabled",
+                f"{threshold_key}_upper_enabled",
                 value=bool(row.get("upper_enabled", True)),
                 label_visibility="collapsed",
-                key=f"premium_upper_enabled_{row['asset_group']}",
+                key=f"premium_upper_enabled_{threshold_key}",
             )
             upper_threshold = cols[3].number_input(
-                f"{row['asset_group']}_upper",
+                f"{threshold_key}_upper",
                 min_value=0.0,
                 value=float(row["upper"]),
                 step=0.1,
                 label_visibility="collapsed",
-                key=f"premium_upper_{row['asset_group']}",
+                key=f"premium_upper_{threshold_key}",
             )
             annualized_upper_enabled = cols[4].checkbox(
-                f"{row['asset_group']}_annualized_upper_enabled",
+                f"{threshold_key}_annualized_upper_enabled",
                 value=bool(row.get("annualized_upper_enabled", True)),
                 label_visibility="collapsed",
-                key=f"premium_annualized_upper_enabled_{row['asset_group']}",
+                key=f"premium_annualized_upper_enabled_{threshold_key}",
             )
             annualized_upper_threshold = cols[5].number_input(
-                f"{row['asset_group']}_annualized_upper",
+                f"{threshold_key}_annualized_upper",
                 min_value=0.0,
                 value=float(row["annualized_upper"]),
                 step=0.1,
                 label_visibility="collapsed",
-                key=f"premium_annualized_upper_{row['asset_group']}",
+                key=f"premium_annualized_upper_{threshold_key}",
             )
             lower_enabled = cols[6].checkbox(
-                f"{row['asset_group']}_lower_enabled",
+                f"{threshold_key}_lower_enabled",
                 value=bool(row.get("lower_enabled", True)),
                 label_visibility="collapsed",
-                key=f"premium_lower_enabled_{row['asset_group']}",
+                key=f"premium_lower_enabled_{threshold_key}",
             )
             lower_threshold = cols[7].number_input(
-                f"{row['asset_group']}_lower",
+                f"{threshold_key}_lower",
                 max_value=0.0,
                 value=float(row["lower"]),
                 step=0.1,
                 label_visibility="collapsed",
-                key=f"premium_lower_{row['asset_group']}",
+                key=f"premium_lower_{threshold_key}",
             )
             annualized_lower_enabled = cols[8].checkbox(
-                f"{row['asset_group']}_annualized_lower_enabled",
+                f"{threshold_key}_annualized_lower_enabled",
                 value=bool(row.get("annualized_lower_enabled", True)),
                 label_visibility="collapsed",
-                key=f"premium_annualized_lower_enabled_{row['asset_group']}",
+                key=f"premium_annualized_lower_enabled_{threshold_key}",
             )
             annualized_lower_threshold = cols[9].number_input(
-                f"{row['asset_group']}_annualized_lower",
+                f"{threshold_key}_annualized_lower",
                 max_value=0.0,
                 value=float(row["annualized_lower"]),
                 step=0.1,
                 label_visibility="collapsed",
-                key=f"premium_annualized_lower_{row['asset_group']}",
+                key=f"premium_annualized_lower_{threshold_key}",
             )
-            premium_threshold_updates[row["asset_group"]] = {
+            premium_threshold_updates[threshold_key] = {
+                "upper_enabled": bool(upper_enabled),
+                "upper": float(upper_threshold),
+                "annualized_upper_enabled": bool(annualized_upper_enabled),
+                "annualized_upper": float(annualized_upper_threshold),
+                "lower_enabled": bool(lower_enabled),
+                "lower": float(lower_threshold),
+                "annualized_lower_enabled": bool(annualized_lower_enabled),
+                "annualized_lower": float(annualized_lower_threshold),
+            }
+
+        st.markdown("**加密资产五桶阈值**")
+        crypto_threshold_widths = [0.9, 0.8, 1.1, 0.8, 1, 0.8, 1.1, 0.8, 1, 0.8, 1.1]
+        render_threshold_header(
+            crypto_threshold_widths,
+            [
+                "资产",
+                "合约桶",
+                "名称",
+                "升水启用",
+                "升水阈值(%)",
+                "年化升水启用",
+                "年化升水阈值(%)",
+                "贴水启用",
+                "贴水阈值(%)",
+                "年化贴水启用",
+                "年化贴水阈值(%)",
+            ],
+        )
+        for row in crypto_rows:
+            cols = st.columns(crypto_threshold_widths)
+            threshold_key = row["threshold_key"]
+            cols[0].markdown(f"`{row['asset_group']}`")
+            cols[1].markdown(row["bucket_label"])
+            cols[2].markdown(row["name"])
+            upper_enabled = cols[3].checkbox(
+                f"{threshold_key}_upper_enabled",
+                value=bool(row.get("upper_enabled", True)),
+                label_visibility="collapsed",
+                key=f"premium_upper_enabled_{threshold_key}",
+            )
+            upper_threshold = cols[4].number_input(
+                f"{threshold_key}_upper",
+                min_value=0.0,
+                value=float(row["upper"]),
+                step=0.1,
+                label_visibility="collapsed",
+                key=f"premium_upper_{threshold_key}",
+            )
+            annualized_upper_enabled = cols[5].checkbox(
+                f"{threshold_key}_annualized_upper_enabled",
+                value=bool(row.get("annualized_upper_enabled", True)),
+                label_visibility="collapsed",
+                key=f"premium_annualized_upper_enabled_{threshold_key}",
+            )
+            annualized_upper_threshold = cols[6].number_input(
+                f"{threshold_key}_annualized_upper",
+                min_value=0.0,
+                value=float(row["annualized_upper"]),
+                step=0.1,
+                label_visibility="collapsed",
+                key=f"premium_annualized_upper_{threshold_key}",
+            )
+            lower_enabled = cols[7].checkbox(
+                f"{threshold_key}_lower_enabled",
+                value=bool(row.get("lower_enabled", True)),
+                label_visibility="collapsed",
+                key=f"premium_lower_enabled_{threshold_key}",
+            )
+            lower_threshold = cols[8].number_input(
+                f"{threshold_key}_lower",
+                max_value=0.0,
+                value=float(row["lower"]),
+                step=0.1,
+                label_visibility="collapsed",
+                key=f"premium_lower_{threshold_key}",
+            )
+            annualized_lower_enabled = cols[9].checkbox(
+                f"{threshold_key}_annualized_lower_enabled",
+                value=bool(row.get("annualized_lower_enabled", True)),
+                label_visibility="collapsed",
+                key=f"premium_annualized_lower_enabled_{threshold_key}",
+            )
+            annualized_lower_threshold = cols[10].number_input(
+                f"{threshold_key}_annualized_lower",
+                max_value=0.0,
+                value=float(row["annualized_lower"]),
+                step=0.1,
+                label_visibility="collapsed",
+                key=f"premium_annualized_lower_{threshold_key}",
+            )
+            premium_threshold_updates[threshold_key] = {
                 "upper_enabled": bool(upper_enabled),
                 "upper": float(upper_threshold),
                 "annualized_upper_enabled": bool(annualized_upper_enabled),

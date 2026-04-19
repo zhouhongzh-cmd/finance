@@ -5,7 +5,7 @@ from typing import List
 from models.market_data import PremiumArbitrageData
 from models.signals import Signal
 from strategies.base import BaseStrategy
-from utils.premium_config import get_effective_premium_threshold
+from utils.premium_config import CONTRACT_BUCKET_LABELS, get_effective_premium_threshold
 
 
 class PremiumArbitrageStrategy(BaseStrategy):
@@ -17,7 +17,7 @@ class PremiumArbitrageStrategy(BaseStrategy):
         signals: List[Signal] = []
 
         for item in data:
-            threshold = get_effective_premium_threshold(item.asset_group)
+            threshold = get_effective_premium_threshold(item.asset_group, item.contract_bucket)
             upper_enabled = bool(threshold.get("upper_enabled", True))
             upper_threshold = float(threshold["upper"])
             annualized_upper_enabled = bool(threshold.get("annualized_upper_enabled", True))
@@ -28,7 +28,8 @@ class PremiumArbitrageStrategy(BaseStrategy):
             annualized_lower_threshold = float(threshold["annualized_lower"])
 
             annualized_premium_rate = None
-            if item.days_to_maturity is not None:
+            is_annualized_supported = item.contract_bucket != "PERP" and item.days_to_maturity is not None
+            if is_annualized_supported:
                 annualized_premium_rate = item.premium_rate * (
                     365 / max(int(item.days_to_maturity), 1)
                 )
@@ -82,13 +83,16 @@ class PremiumArbitrageStrategy(BaseStrategy):
                 continue
 
             level = "CRITICAL" if severity_ratio >= 1.5 else "WARNING"
+            bucket_label = CONTRACT_BUCKET_LABELS.get(item.contract_bucket, item.contract_bucket or "多合约")
             asset_label = (
-                "BTC 期现" if item.asset_group == "BTC" else f"A50 {item.future_name or item.future_symbol}"
+                f"{item.asset_group} {bucket_label} {item.future_symbol}".strip()
+                if item.asset_group != "A50"
+                else f"A50 {item.future_name or item.future_symbol}"
             )
             annualized_display = (
                 f"{annualized_magnitude:.2f}%"
                 if annualized_magnitude is not None
-                else "N/A（未提供交割日）"
+                else "N/A（永续或未提供交割日）"
             )
             if direction == "升水":
                 ordinary_line = f"普通升水阈值：{'启用' if upper_enabled else '关闭'} / {upper_threshold:.2f}%"
@@ -111,6 +115,7 @@ class PremiumArbitrageStrategy(BaseStrategy):
             message = (
                 f"期现溢价阈值触发\n"
                 f"资产组：{item.asset_group}\n"
+                f"合约桶：{bucket_label}\n"
                 f"现货：{item.spot_name} ({item.spot_symbol}) {item.spot_price:,.2f}\n"
                 f"期货：{item.future_name} ({item.future_symbol}) {item.future_price:,.2f}\n"
                 f"方向：{direction}\n"

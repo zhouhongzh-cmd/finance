@@ -85,17 +85,17 @@ def flatten_futures_threshold_values(rows: list[dict[str, Any]]) -> dict[str, An
 def flatten_premium_threshold_values(rows: list[dict[str, Any]]) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     for row in rows:
-        asset_group = row["asset_group"]
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.upper_enabled"] = bool(row["upper_enabled"])
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.upper"] = float(row["upper"])
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.annualized_upper_enabled"] = bool(
+        threshold_key = row.get("threshold_key", row["asset_group"])
+        payload[f"PREMIUM_THRESHOLD.{threshold_key}.upper_enabled"] = bool(row["upper_enabled"])
+        payload[f"PREMIUM_THRESHOLD.{threshold_key}.upper"] = float(row["upper"])
+        payload[f"PREMIUM_THRESHOLD.{threshold_key}.annualized_upper_enabled"] = bool(
             row["annualized_upper_enabled"]
         )
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.annualized_upper"] = float(row["annualized_upper"])
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.lower_enabled"] = bool(row["lower_enabled"])
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.lower"] = float(row["lower"])
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.annualized_lower_enabled"] = bool(
+        payload[f"PREMIUM_THRESHOLD.{threshold_key}.annualized_upper"] = float(row["annualized_upper"])
+        payload[f"PREMIUM_THRESHOLD.{threshold_key}.lower_enabled"] = bool(row["lower_enabled"])
+        payload[f"PREMIUM_THRESHOLD.{threshold_key}.lower"] = float(row["lower"])
+        payload[f"PREMIUM_THRESHOLD.{threshold_key}.annualized_lower_enabled"] = bool(
             row["annualized_lower_enabled"]
         )
-        payload[f"PREMIUM_THRESHOLD.{asset_group}.annualized_lower"] = float(row["annualized_lower"])
+        payload[f"PREMIUM_THRESHOLD.{threshold_key}.annualized_lower"] = float(row["annualized_lower"])
     return payload
