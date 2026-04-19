@@ -163,31 +163,43 @@
 - `fallback`: 依次回退到 `ak.currency_boc_sina()`、`forex_python.converter.CurrencyRates()`、默认汇率
 - `notes`: 当前系统使用 `USD/CNY` 买报价，失败时自动兜底
 
-### 1.14 BTC 现货主数据源
+### 1.14 加密资产现货主数据源
 
 - `status`: `ACTIVE`
 - `module`: `fetchers/premium_fetcher.py`
-- `name`: `yfinance.BTC-USD`
-- `call`: `yf.Ticker("BTC-USD")`
-- `rate_limit`: 中等
+- `name`: `gate.spot.tickers`
+- `call`: `GET /spot/tickers`
+- `rate_limit`: 宽松
 - `latency`: 中等
-- `quality`: 中
-- `fallback`: 依次尝试 `fast_info`、`info`、`history(period="1d")`；仍失败则跳过 BTC 本轮
-- `notes`: 用于 BTC 期现溢价监控的现货腿
+- `quality`: 中高
+- `fallback`: 若单个币种现货缺失则跳过该资产；整表失败则跳过本轮加密资产现货腿
+- `notes`: 当前用于固定白名单 `Top10` 合约加密资产池的现货腿，默认读取 `*_USDT`
 
-### 1.15 BTC 期货主数据源
+### 1.15 加密资产永续主数据源
 
 - `status`: `ACTIVE`
 - `module`: `fetchers/premium_fetcher.py`
-- `name`: `yfinance.BTC=F`
-- `call`: `yf.Ticker("BTC=F")`
-- `rate_limit`: 中等
+- `name`: `gate.futures.usdt.contracts`
+- `call`: `GET /futures/usdt/contracts`
+- `rate_limit`: 宽松
 - `latency`: 中等
-- `quality`: 中
-- `fallback`: 依次尝试 `fast_info`、`info`、`history(period="1d")`；仍失败则跳过 BTC 本轮
-- `notes`: 用于 BTC 期现溢价监控的期货腿
+- `quality`: 中高
+- `fallback`: 某个资产永续缺失时只跳过 `PERP` 桶；整表失败则跳过本轮加密永续腿
+- `notes`: 当前用于固定白名单 `Top10` 合约加密资产池的永续腿，默认合约名为 `*_USDT`
 
-### 1.16 A50 现货主数据源
+### 1.16 加密资产交割合约主数据源
+
+- `status`: `ACTIVE`
+- `module`: `fetchers/premium_fetcher.py`
+- `name`: `gate.delivery.usdt.contracts`
+- `call`: `GET /delivery/usdt/contracts`
+- `rate_limit`: 宽松
+- `latency`: 中等
+- `quality`: 中高
+- `fallback`: 某个资产仅缺失部分交割合约桶时允许局部跳过；整表失败则只保留现货与永续
+- `notes`: 当前按 `expire_time + cycle` 归类为 `MONTHLY_CURRENT`、`MONTHLY_NEXT`、`QUARTERLY_CURRENT`、`QUARTERLY_NEXT`
+
+### 1.17 A50 现货主数据源
 
 - `status`: `ACTIVE`
 - `module`: `fetchers/premium_fetcher.py`
@@ -199,7 +211,7 @@
 - `fallback`: 依次尝试 `fast_info`、`info`、`history(period="1d")`；仍失败则跳过 A50 全组
 - `notes`: 用于 A50 期现溢价监控的现货腿
 
-### 1.17 A50 期货主数据源
+### 1.18 A50 期货主数据源
 
 - `status`: `ACTIVE`
 - `module`: `fetchers/premium_fetcher.py`

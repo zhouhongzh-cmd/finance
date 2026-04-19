@@ -2,23 +2,37 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
 from calendar import monthrange
+from datetime import datetime
 from typing import Any
 
 import akshare as ak
+import httpx
 import pandas as pd
 import yfinance as yf
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from models.market_data import PremiumArbitrageData
 from utils.logger import logger
+from utils.premium_config import (
+    CONTRACT_BUCKET_LABELS,
+    CONTRACT_BUCKET_ORDER,
+    CRYPTO_PREMIUM_ASSETS,
+)
 from utils.source_health import source_health_context
 
 
 class PremiumFetcher:
-    """BTC 与 A50 期现溢价抓取器。"""
+    """A50 与加密期现溢价抓取器。"""
 
+    GATE_BASE_URL = "https://api.gateio.ws/api/v4"
+    GATE_SOURCE = "gate.api.v4"
+    GATE_EXCHANGE = "Gate"
+    GATE_SETTLE = "usdt"
+    GATE_TOP_CRYPTO_ASSETS: dict[str, str] = CRYPTO_PREMIUM_ASSETS
+    GATE_PERP_BUCKET = "PERP"
+    GATE_DELIVERY_MONTHLY_BUCKETS = ("MONTHLY_CURRENT", "MONTHLY_NEXT")
+    GATE_DELIVERY_QUARTERLY_BUCKETS = ("QUARTERLY_CURRENT", "QUARTERLY_NEXT")
     A50_MONTH_CODES = {
         "F": 1,
         "G": 2,
@@ -36,12 +50,9 @@ class PremiumFetcher:
     }
 
     def _fetch_yfinance_price(self, symbol: str, source_name: str) -> tuple[float | None, str]:
-        price = None
-        source = ""
         try:
             with source_health_context(source_name):
                 ticker = yf.Ticker(symbol)
-
                 fast_info = getattr(ticker, "fast_info", None)
                 if fast_info is not None:
                     price = fast_info.get("lastPrice") or fast_info.get("regularMarketPrice")
@@ -64,32 +75,43 @@ class PremiumFetcher:
                         return float(close_price), "yfinance.history_1d"
         except Exception as exc:
             logger.warning("premium_yfinance_fetch_failed", symbol=symbol, error=str(exc))
-        return None, source
+        return None, ""
 
-    def _fetch_btc_future_price(self) -> tuple[float | None, str, str, str]:
+    def _gate_get_json(self, path: str, *, source_name: str) -> Any:
+        url = f"{self.GATE_BASE_URL}{path}"
+        with source_health_context(source_name):
+            response = httpx.get(url, timeout=15.0)
+            response.raise_for_status()
+            return response.json()
+
+    def _estimate_a50_days_to_maturity(self, future_symbol: str) -> int | None:
+        code = (future_symbol or "").strip().upper()
+        if not code.startswith("CN") or len(code) < 4:
+            return None
+
+        suffix = code[-1]
+        month = self.A50_MONTH_CODES.get(suffix)
+        now = datetime.now()
+        if suffix == "Y":
+            month = now.month
+            year = now.year
+        else:
+            year_fragment = code[-3:-1]
+            if not year_fragment.isdigit() or month is None:
+                return None
+            year = 2000 + int(year_fragment)
+
+        expiry_date = datetime(year, month, monthrange(year, month)[1])
+        return max((expiry_date.date() - now.date()).days, 0)
+
+    def _format_expiry_ts(self, raw_expiry: Any) -> str:
         try:
-            with source_health_context("premium_btc_future_akshare"):
-                df = ak.futures_foreign_commodity_realtime(symbol="BTC")
-            if df is not None and not df.empty:
-                row = df.iloc[0]
-                raw_price = row.get("最新价")
-                if raw_price is not None and not pd.isna(raw_price):
-                    future_name = str(row.get("名称") or "CME比特币期货").strip()
-                    return (
-                        float(raw_price),
-                        "akshare.futures_foreign_commodity_realtime",
-                        "BTC",
-                        future_name or "CME比特币期货",
-                    )
-        except Exception as exc:
-            logger.warning("premium_btc_future_akshare_failed", error=str(exc))
-
-        fallback_price, fallback_source = self._fetch_yfinance_price(
-            "BTC=F", "premium_btc_future_yfinance"
-        )
-        if fallback_price is not None:
-            return fallback_price, fallback_source, "BTC=F", "BTC期货"
-        return None, "", "", ""
+            expiry = int(raw_expiry)
+        except Exception:
+            return ""
+        if expiry <= 0:
+            return ""
+        return datetime.fromtimestamp(expiry).isoformat()
 
     def _build_snapshot(
         self,
@@ -101,9 +123,14 @@ class PremiumFetcher:
         future_symbol: str,
         future_name: str,
         future_price: float,
-        days_to_maturity: int | None,
-        source_spot: str,
-        source_future: str,
+        contract_bucket: str = "",
+        contract_type: str = "",
+        expiry_ts: str = "",
+        bucket_rank: int = 0,
+        source_exchange: str = "",
+        days_to_maturity: int | None = None,
+        source_spot: str = "",
+        source_future: str = "",
     ) -> PremiumArbitrageData:
         premium = future_price - spot_price
         premium_rate = (premium / spot_price * 100) if spot_price else 0.0
@@ -121,70 +148,23 @@ class PremiumFetcher:
             premium=premium,
             premium_rate=premium_rate,
             state=state,
+            contract_bucket=contract_bucket,
+            contract_type=contract_type,
+            expiry_ts=expiry_ts,
+            bucket_rank=bucket_rank,
+            source_exchange=source_exchange,
             days_to_maturity=days_to_maturity,
             source_spot=source_spot,
             source_future=source_future,
         )
 
-    def _estimate_days_to_maturity(self, future_symbol: str) -> int | None:
-        code = (future_symbol or "").strip().upper()
-        if not code.startswith("CN") or len(code) < 4:
-            return None
-
-        suffix = code[-1]
-        month = self.A50_MONTH_CODES.get(suffix)
-        now = datetime.now()
-        if suffix == "Y":
-            month = now.month
-            year = now.year
-        else:
-            year_fragment = code[-3:-1]
-            if not year_fragment.isdigit() or month is None:
-                return None
-            year = 2000 + int(year_fragment)
-
-        last_day = monthrange(year, month)[1]
-        expiry_date = datetime(year, month, last_day)
-        delta = (expiry_date.date() - now.date()).days
-        return max(delta, 0)
-
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=8))
-    def fetch_live(self) -> list[PremiumArbitrageData]:
+    def _build_a50_snapshots(self) -> list[PremiumArbitrageData]:
         results: list[PremiumArbitrageData] = []
-        logger.info("fetch_premium_live_start")
-
-        btc_spot, btc_spot_source = self._fetch_yfinance_price(
-            "BTC-USD", "premium_btc_spot_yfinance"
-        )
-        btc_future, btc_future_source, btc_future_symbol, btc_future_name = self._fetch_btc_future_price()
-        if btc_spot is not None and btc_future is not None:
-            results.append(
-                self._build_snapshot(
-                    asset_group="BTC",
-                    spot_symbol="BTC-USD",
-                    spot_name="BTC现货",
-                    spot_price=btc_spot,
-                    future_symbol=btc_future_symbol or "BTC=F",
-                    future_name=btc_future_name or "BTC期货",
-                    future_price=btc_future,
-                    days_to_maturity=None,
-                    source_spot=btc_spot_source,
-                    source_future=btc_future_source,
-                )
-            )
-        else:
-            logger.warning(
-                "premium_btc_incomplete",
-                has_spot=btc_spot is not None,
-                has_future=btc_future is not None,
-            )
-
         a50_spot, a50_spot_source = self._fetch_yfinance_price(
             "XIN9.FGI", "premium_a50_spot_yfinance"
         )
         if a50_spot is None:
             logger.warning("premium_a50_spot_missing")
-            logger.info("fetch_premium_live_success", count=len(results))
             return results
 
         try:
@@ -202,7 +182,6 @@ class PremiumFetcher:
                     future_name = str(row.get("名称") or row.get("name") or future_symbol).strip()
                     if not future_symbol:
                         future_symbol = future_name
-                    days_to_maturity = self._estimate_days_to_maturity(future_symbol)
                     results.append(
                         self._build_snapshot(
                             asset_group="A50",
@@ -212,7 +191,12 @@ class PremiumFetcher:
                             future_symbol=future_symbol,
                             future_name=future_name,
                             future_price=future_price,
-                            days_to_maturity=days_to_maturity,
+                            contract_bucket="A50",
+                            contract_type="future",
+                            expiry_ts="",
+                            bucket_rank=0 if future_symbol == "CN00Y" else 10,
+                            source_exchange="A50",
+                            days_to_maturity=self._estimate_a50_days_to_maturity(future_symbol),
                             source_spot=a50_spot_source,
                             source_future="akshare.futures_global_spot_em",
                         )
@@ -221,7 +205,169 @@ class PremiumFetcher:
                     logger.warning("premium_a50_future_parse_failed", error=str(exc))
         except Exception as exc:
             logger.warning("premium_a50_futures_fetch_failed", error=str(exc))
+        return results
 
+    def _fetch_gate_spot_pairs(self) -> set[str]:
+        rows = self._gate_get_json("/spot/currency_pairs", source_name="premium_gate_spot_pairs")
+        return {
+            str(item.get("id") or item.get("currency_pair") or "").strip()
+            for item in rows
+            if isinstance(item, dict) and item.get("trade_status") == "tradable"
+        }
+
+    def _fetch_gate_spot_tickers(self) -> dict[str, dict[str, Any]]:
+        rows = self._gate_get_json("/spot/tickers", source_name="premium_gate_spot_tickers")
+        return {
+            str(item.get("currency_pair") or "").strip(): item
+            for item in rows
+            if isinstance(item, dict) and item.get("currency_pair")
+        }
+
+    def _fetch_gate_perp_contracts(self) -> dict[str, dict[str, Any]]:
+        rows = self._gate_get_json(
+            f"/futures/{self.GATE_SETTLE}/contracts",
+            source_name="premium_gate_perp_contracts",
+        )
+        return {
+            str(item.get("name") or "").strip(): item
+            for item in rows
+            if isinstance(item, dict) and item.get("name") and not item.get("in_delisting", False)
+        }
+
+    def _fetch_gate_delivery_contracts(self) -> dict[str, list[dict[str, Any]]]:
+        rows = self._gate_get_json(
+            f"/delivery/{self.GATE_SETTLE}/contracts",
+            source_name="premium_gate_delivery_contracts",
+        )
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for item in rows:
+            if not isinstance(item, dict) or item.get("in_delisting", False):
+                continue
+            underlying = str(item.get("underlying") or "").strip()
+            if not underlying:
+                continue
+            grouped.setdefault(underlying, []).append(item)
+        for contracts in grouped.values():
+            contracts.sort(key=lambda item: int(item.get("expire_time") or 0))
+        return grouped
+
+    def _build_gate_delivery_buckets(self, delivery_rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        monthly_rows = [
+            row
+            for row in delivery_rows
+            if str(row.get("cycle") or "").upper() not in {"QUARTERLY", "BI-QUARTERLY"}
+        ]
+        quarterly_rows = [
+            row
+            for row in delivery_rows
+            if str(row.get("cycle") or "").upper() in {"QUARTERLY", "BI-QUARTERLY"}
+        ]
+
+        buckets: dict[str, dict[str, Any]] = {}
+        for bucket_name, row in zip(self.GATE_DELIVERY_MONTHLY_BUCKETS, monthly_rows[:2]):
+            buckets[bucket_name] = row
+        for bucket_name, row in zip(self.GATE_DELIVERY_QUARTERLY_BUCKETS, quarterly_rows[:2]):
+            buckets[bucket_name] = row
+        return buckets
+
+    def _build_gate_crypto_snapshots(self) -> list[PremiumArbitrageData]:
+        results: list[PremiumArbitrageData] = []
+        try:
+            spot_pairs = self._fetch_gate_spot_pairs()
+            spot_tickers = self._fetch_gate_spot_tickers()
+            perp_contracts = self._fetch_gate_perp_contracts()
+            delivery_contracts = self._fetch_gate_delivery_contracts()
+
+            for asset_group in self.GATE_TOP_CRYPTO_ASSETS:
+                underlying = f"{asset_group}_USDT"
+                if underlying not in spot_pairs:
+                    continue
+                if underlying not in perp_contracts and not delivery_contracts.get(underlying):
+                    continue
+
+                spot_row = spot_tickers.get(underlying)
+                if not spot_row:
+                    logger.warning("premium_gate_spot_missing", asset_group=asset_group)
+                    continue
+                try:
+                    spot_price = float(spot_row["last"])
+                except Exception:
+                    logger.warning("premium_gate_spot_price_invalid", asset_group=asset_group)
+                    continue
+
+                if underlying in perp_contracts:
+                    perp_row = perp_contracts[underlying]
+                    try:
+                        results.append(
+                            self._build_snapshot(
+                                asset_group=asset_group,
+                                spot_symbol=underlying,
+                                spot_name=f"{asset_group}现货",
+                                spot_price=spot_price,
+                                future_symbol=underlying,
+                                future_name=f"{asset_group}永续",
+                                future_price=float(perp_row["last_price"]),
+                                contract_bucket=self.GATE_PERP_BUCKET,
+                                contract_type="swap",
+                                expiry_ts="",
+                                bucket_rank=CONTRACT_BUCKET_ORDER[self.GATE_PERP_BUCKET],
+                                source_exchange=self.GATE_EXCHANGE,
+                                days_to_maturity=None,
+                                source_spot=self.GATE_SOURCE,
+                                source_future=self.GATE_SOURCE,
+                            )
+                        )
+                    except Exception as exc:
+                        logger.warning("premium_gate_perp_parse_failed", asset_group=asset_group, error=str(exc))
+
+                for bucket_name, row in self._build_gate_delivery_buckets(
+                    delivery_contracts.get(underlying, [])
+                ).items():
+                    try:
+                        expiry_raw = int(row.get("expire_time") or 0)
+                        expiry_ts = self._format_expiry_ts(expiry_raw)
+                        days_to_maturity = None
+                        if expiry_raw > 0:
+                            days_to_maturity = max(
+                                (datetime.fromtimestamp(expiry_raw).date() - datetime.now().date()).days,
+                                0,
+                            )
+                        results.append(
+                            self._build_snapshot(
+                                asset_group=asset_group,
+                                spot_symbol=underlying,
+                                spot_name=f"{asset_group}现货",
+                                spot_price=spot_price,
+                                future_symbol=str(row.get("name") or ""),
+                                future_name=f"{asset_group}{CONTRACT_BUCKET_LABELS[bucket_name]}",
+                                future_price=float(row["last_price"]),
+                                contract_bucket=bucket_name,
+                                contract_type="future",
+                                expiry_ts=expiry_ts,
+                                bucket_rank=CONTRACT_BUCKET_ORDER[bucket_name],
+                                source_exchange=self.GATE_EXCHANGE,
+                                days_to_maturity=days_to_maturity,
+                                source_spot=self.GATE_SOURCE,
+                                source_future=self.GATE_SOURCE,
+                            )
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "premium_gate_delivery_parse_failed",
+                            asset_group=asset_group,
+                            contract_bucket=bucket_name,
+                            error=str(exc),
+                        )
+        except Exception as exc:
+            logger.warning("premium_gate_crypto_fetch_failed", error=str(exc))
+        return results
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=8))
+    def fetch_live(self) -> list[PremiumArbitrageData]:
+        logger.info("fetch_premium_live_start")
+        results: list[PremiumArbitrageData] = []
+        results.extend(self._build_gate_crypto_snapshots())
+        results.extend(self._build_a50_snapshots())
         logger.info("fetch_premium_live_success", count=len(results))
         return results
 
@@ -248,6 +394,11 @@ class PremiumFetcher:
                     future_symbol=item["future_symbol"],
                     future_name=item.get("future_name", item["future_symbol"]),
                     future_price=float(future_price),
+                    contract_bucket=str(item.get("contract_bucket", "")),
+                    contract_type=str(item.get("contract_type", "")),
+                    expiry_ts=str(item.get("expiry_ts", "")),
+                    bucket_rank=int(item.get("bucket_rank", 0)),
+                    source_exchange=str(item.get("source_exchange", "")),
                     days_to_maturity=item.get("days_to_maturity"),
                     source_spot=item.get("source_spot", "fixture"),
                     source_future=item.get("source_future", "fixture"),

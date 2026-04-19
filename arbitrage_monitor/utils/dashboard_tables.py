@@ -5,8 +5,15 @@ from typing import Iterable
 
 import pandas as pd
 
-from models.market_data import FuturesData, MetalArbitrageData, PremiumArbitrageData
+from models.market_data import (
+    CBData,
+    FuturesData,
+    MetalArbitrageData,
+    PremiumArbitrageData,
+    SentimentData,
+)
 from models.signals import Signal
+from utils.premium_config import CONTRACT_BUCKET_LABELS, CRYPTO_PREMIUM_ASSETS
 
 
 FUTURES_PRODUCT_ORDER = {"IH": 0, "IF": 1, "IC": 2, "IM": 3}
@@ -42,9 +49,14 @@ METALS_FRONT_COLUMNS = [
     "价差百分比(%)",
 ]
 
-PREMIUM_GROUP_ORDER = {"BTC": 0, "A50": 1}
+PREMIUM_GROUP_ORDER = {
+    **{asset_group: index for index, asset_group in enumerate(CRYPTO_PREMIUM_ASSETS)},
+    "A50": 999,
+}
 PREMIUM_FRONT_COLUMNS = [
     "资产组",
+    "合约桶",
+    "合约类型",
     "市场",
     "现货代码",
     "现货价格",
@@ -57,6 +69,8 @@ PREMIUM_FRONT_COLUMNS = [
     "状态",
     "时间",
 ]
+CONVERTIBLE_FRONT_COLUMNS = ["名称", "时间", "现价", "溢价率", "双低", "税前YTM"]
+SENTIMENT_FRONT_COLUMNS = ["股票名称", "代码", "时间", "排行", "热度值", "情绪脉冲"]
 
 
 def level_badge(level: str) -> str:
@@ -181,10 +195,15 @@ def build_premium_live_tables(
     signal_map = {signal.asset: level_badge(signal.level) for signal in signals}
     rows = []
     for item in data:
-        asset = "BTC 期现" if item.asset_group == "BTC" else f"A50 {item.future_name or item.future_symbol}"
+        bucket_label = CONTRACT_BUCKET_LABELS.get(item.contract_bucket, item.contract_bucket or "多合约")
+        asset = (
+            f"{item.asset_group} {bucket_label} {item.future_symbol}".strip()
+            if item.asset_group != "A50"
+            else f"A50 {item.future_name or item.future_symbol}"
+        )
         annualized = (
             item.premium_rate * (365 / max(item.days_to_maturity, 1))
-            if item.days_to_maturity is not None
+            if item.contract_bucket != "PERP" and item.days_to_maturity is not None
             else None
         )
         premium_magnitude = abs(item.premium_rate)
@@ -192,7 +211,9 @@ def build_premium_live_tables(
         rows.append(
             {
                 "资产组": item.asset_group,
-                "市场": "加密货币" if item.asset_group == "BTC" else "A50",
+                "合约桶": bucket_label,
+                "合约类型": item.contract_type or ("future" if item.asset_group == "A50" else ""),
+                "市场": "加密货币" if item.asset_group != "A50" else "A50",
                 "现货代码": item.spot_symbol,
                 "现货名称": item.spot_name,
                 "现货价格": round(item.spot_price, 4),
@@ -204,12 +225,18 @@ def build_premium_live_tables(
                 "年化溢价率(%)": round(annualized_magnitude, 4) if annualized_magnitude is not None else "N/A",
                 "剩余天数": item.days_to_maturity if item.days_to_maturity is not None else "N/A",
                 "状态": "升水" if item.state == "contango" else "贴水",
+                "来源交易所": item.source_exchange or "N/A",
+                "到期时间": item.expiry_ts or "N/A",
                 "现货来源": item.source_spot,
                 "期货来源": item.source_future,
                 "时间": item.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
                 "信号": signal_map.get(asset, ""),
                 "_group_order": PREMIUM_GROUP_ORDER.get(item.asset_group, 999),
-                "_contract_order": 0 if item.future_symbol == "CN00Y" else 1,
+                "_contract_order": (
+                    int(item.bucket_rank)
+                    if item.contract_bucket
+                    else (0 if item.future_symbol == "CN00Y" else 1)
+                ),
             }
         )
 
@@ -232,4 +259,84 @@ def build_premium_live_tables(
     )
     remaining_columns = [col for col in df.columns if col not in PREMIUM_FRONT_COLUMNS]
     df = df[PREMIUM_FRONT_COLUMNS + remaining_columns]
+    return df, pd.DataFrame(signal_rows)
+
+
+def build_convertible_live_tables(
+    data: Iterable[CBData], signals: Iterable[Signal]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    signal_map = {signal.asset: level_badge(signal.level) for signal in signals}
+    rows = []
+    for item in data:
+        rows.append(
+            {
+                "名称": item.symbol,
+                "时间": item.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                "现价": round(item.price, 2),
+                "溢价率": round(item.premium_rate, 2),
+                "双低": round(item.double_low, 2),
+                "税前YTM": round(item.ytm, 4),
+                "上市状态": item.listing_status,
+                "信号": signal_map.get(item.symbol, ""),
+            }
+        )
+
+    signal_rows = [
+        {
+            "级别": level_badge(signal.level),
+            "标的": signal.asset,
+            "策略": signal.strategy_name,
+            "详情": signal.message.replace("\n", " | "),
+        }
+        for signal in signals
+    ]
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df, pd.DataFrame(signal_rows)
+
+    df = df.sort_values(
+        by=["双低", "溢价率", "税前YTM"], ascending=[True, True, False]
+    )
+    remaining_columns = [col for col in df.columns if col not in CONVERTIBLE_FRONT_COLUMNS]
+    df = df[CONVERTIBLE_FRONT_COLUMNS + remaining_columns]
+    return df, pd.DataFrame(signal_rows)
+
+
+def build_sentiment_live_tables(
+    data: Iterable[SentimentData], signals: Iterable[Signal]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    signal_map = {signal.asset: level_badge(signal.level) for signal in signals}
+    rows = []
+    for item in data:
+        asset = f"{item.symbol} {item.name}" if item.name and item.name != item.symbol else item.symbol
+        rows.append(
+            {
+                "股票名称": item.name,
+                "代码": item.symbol,
+                "时间": item.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                "排行": item.rank,
+                "热度值": item.hot_score,
+                "情绪脉冲": item.sentiment_pulse,
+                "信号": signal_map.get(asset, ""),
+            }
+        )
+
+    signal_rows = [
+        {
+            "级别": level_badge(signal.level),
+            "标的": signal.asset,
+            "策略": signal.strategy_name,
+            "详情": signal.message.replace("\n", " | "),
+        }
+        for signal in signals
+    ]
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df, pd.DataFrame(signal_rows)
+
+    df = df.sort_values(by=["排行"], ascending=[True])
+    remaining_columns = [col for col in df.columns if col not in SENTIMENT_FRONT_COLUMNS]
+    df = df[SENTIMENT_FRONT_COLUMNS + remaining_columns]
     return df, pd.DataFrame(signal_rows)

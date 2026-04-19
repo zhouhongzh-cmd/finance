@@ -677,7 +677,13 @@ def test_snapshot_deduplication():
     """测试高频快照分钟去重与变化更新。"""
     logger.info("test_snapshot_deduplication_start")
 
-    from models.market_data import FuturesData, MetalArbitrageData, PremiumArbitrageData
+    from models.market_data import (
+        CBData,
+        FuturesData,
+        MetalArbitrageData,
+        PremiumArbitrageData,
+        SentimentData,
+    )
 
     db = DBManager()
     base_ts = datetime.now().replace(second=5, microsecond=0)
@@ -784,6 +790,54 @@ def test_snapshot_deduplication():
     db.save_premium_snapshots([premium_a])
     db.save_premium_snapshots([premium_b])
 
+    cb_a = CBData(
+        symbol="DEDUP_CB",
+        timestamp=base_ts,
+        premium_rate=12.3,
+        double_low=110.3,
+        price=98.0,
+        ytm=1.23,
+        bond_code="110000",
+        bond_name="测试转债",
+        listing_status="listed",
+        is_listed=True,
+        is_delisted=False,
+    )
+    cb_b = CBData(
+        symbol="DEDUP_CB",
+        timestamp=later_same_minute,
+        premium_rate=12.1,
+        double_low=109.9,
+        price=98.5,
+        ytm=1.25,
+        bond_code="110000",
+        bond_name="测试转债",
+        listing_status="listed",
+        is_listed=True,
+        is_delisted=False,
+    )
+    db.save_convertible_snapshots([cb_a])
+    db.save_convertible_snapshots([cb_b])
+
+    sentiment_a = SentimentData(
+        symbol="SZ000001",
+        timestamp=base_ts,
+        name="平安银行",
+        hot_score=900,
+        sentiment_pulse=5.0,
+        rank=3,
+    )
+    sentiment_b = SentimentData(
+        symbol="SZ000001",
+        timestamp=later_same_minute,
+        name="平安银行",
+        hot_score=930,
+        sentiment_pulse=6.0,
+        rank=2,
+    )
+    db.save_sentiment_snapshots([sentiment_a])
+    db.save_sentiment_snapshots([sentiment_b])
+
     with db.get_connection() as conn:
         futures_rows = conn.execute(
             "SELECT COUNT(*), MAX(price), MAX(discount_rate) FROM futures_live_snapshot WHERE symbol = 'DEDUP_IF'"
@@ -794,9 +848,17 @@ def test_snapshot_deduplication():
         premium_rows = conn.execute(
             "SELECT COUNT(*), MAX(future_price), MAX(premium_rate) FROM premium_arbitrage_snapshot WHERE symbol = 'DEDUP_BTC:BTC=F'"
         ).fetchone()
+        cb_rows = conn.execute(
+            "SELECT COUNT(*), MAX(price), MAX(double_low) FROM convertible_live_snapshot WHERE symbol = 'DEDUP_CB'"
+        ).fetchone()
+        sentiment_rows = conn.execute(
+            "SELECT COUNT(*), MAX(hot_score), MIN(rank) FROM sentiment_live_snapshot WHERE symbol = 'SZ000001'"
+        ).fetchone()
         conn.execute("DELETE FROM futures_live_snapshot WHERE symbol = 'DEDUP_IF'")
         conn.execute("DELETE FROM metal_arbitrage_snapshot WHERE symbol = 'DEDUP_AU:GC'")
         conn.execute("DELETE FROM premium_arbitrage_snapshot WHERE symbol = 'DEDUP_BTC:BTC=F'")
+        conn.execute("DELETE FROM convertible_live_snapshot WHERE symbol = 'DEDUP_CB'")
+        conn.execute("DELETE FROM sentiment_live_snapshot WHERE symbol = 'SZ000001'")
         conn.commit()
 
     if futures_rows[0] != 1 or float(futures_rows[1]) != 3501 or float(futures_rows[2]) != 1.1:
@@ -808,9 +870,227 @@ def test_snapshot_deduplication():
     if premium_rows[0] != 1 or float(premium_rows[1]) != 68120 or float(premium_rows[2]) != 0.162:
         print(f"❌ Snapshot Deduplication: premium rows mismatch {premium_rows}")
         return False
+    if cb_rows[0] != 1 or float(cb_rows[1]) != 98.5 or float(cb_rows[2]) != 109.9:
+        print(f"❌ Snapshot Deduplication: convertible rows mismatch {cb_rows}")
+        return False
+    if sentiment_rows[0] != 1 or int(sentiment_rows[1]) != 930 or int(sentiment_rows[2]) != 2:
+        print(f"❌ Snapshot Deduplication: sentiment rows mismatch {sentiment_rows}")
+        return False
 
     logger.info("snapshot_deduplication_ok")
     print("✅ Snapshot Deduplication: OK")
+    return True
+
+
+def test_latest_snapshot_readers():
+    """测试最新快照读取接口只返回每个标的最新一条。"""
+    logger.info("test_latest_snapshot_readers_start")
+
+    from models.market_data import (
+        CBData,
+        FuturesData,
+        MetalArbitrageData,
+        PremiumArbitrageData,
+        SentimentData,
+    )
+
+    db = DBManager()
+    ts_old = datetime.now().replace(second=0, microsecond=0) - timedelta(minutes=20)
+    ts_new = ts_old + timedelta(minutes=16)
+
+    db.save_futures_live_snapshots(
+        [
+            FuturesData(
+                symbol="LATEST_IF",
+                timestamp=ts_old,
+                price=3500,
+                spot_price=3510,
+                discount_rate=1.0,
+                product_code="IF",
+                margin_ratio=12.0,
+                days_to_maturity=10,
+            ),
+            FuturesData(
+                symbol="LATEST_IF",
+                timestamp=ts_new,
+                price=3510,
+                spot_price=3520,
+                discount_rate=0.8,
+                product_code="IF",
+                margin_ratio=12.0,
+                days_to_maturity=9,
+            ),
+        ]
+    )
+    db.save_metal_snapshots(
+        [
+            MetalArbitrageData(
+                symbol="LATEST_AU:GC",
+                timestamp=ts_old,
+                metal_symbol="AU0",
+                metal_name="黄金",
+                benchmark_symbol="GC",
+                benchmark_name="COMEX黄金",
+                benchmark_display_name="COMEX GC",
+                domestic_symbol="au0",
+                domestic_name="沪金主力",
+                domestic_unit="元/克",
+                category="precious",
+                dom_price=700,
+                for_price_usd=2400,
+                for_price_cny=699,
+                exchange_rate=7.2,
+                implied_rate=7.18,
+                spread=1,
+                spread_pct=0.14,
+            ),
+            MetalArbitrageData(
+                symbol="LATEST_AU:GC",
+                timestamp=ts_new,
+                metal_symbol="AU0",
+                metal_name="黄金",
+                benchmark_symbol="GC",
+                benchmark_name="COMEX黄金",
+                benchmark_display_name="COMEX GC",
+                domestic_symbol="au0",
+                domestic_name="沪金主力",
+                domestic_unit="元/克",
+                category="precious",
+                dom_price=702,
+                for_price_usd=2405,
+                for_price_cny=701,
+                exchange_rate=7.2,
+                implied_rate=7.18,
+                spread=1,
+                spread_pct=0.15,
+            ),
+        ]
+    )
+    db.save_premium_snapshots(
+        [
+            PremiumArbitrageData(
+                symbol="LATEST_BTC",
+                timestamp=ts_old,
+                asset_group="BTC",
+                spot_symbol="BTC-USD",
+                spot_name="BTC现货",
+                spot_price=68000,
+                future_symbol="BTC=F",
+                future_name="BTC期货",
+                future_price=68100,
+                premium=100,
+                premium_rate=0.147,
+                state="contango",
+                source_spot="fixture",
+                source_future="fixture",
+            ),
+            PremiumArbitrageData(
+                symbol="LATEST_BTC",
+                timestamp=ts_new,
+                asset_group="BTC",
+                spot_symbol="BTC-USD",
+                spot_name="BTC现货",
+                spot_price=68050,
+                future_symbol="BTC=F",
+                future_name="BTC期货",
+                future_price=68160,
+                premium=110,
+                premium_rate=0.161,
+                state="contango",
+                source_spot="fixture",
+                source_future="fixture",
+            ),
+        ]
+    )
+    db.save_convertible_snapshots(
+        [
+            CBData(
+                symbol="LATEST_CB",
+                timestamp=ts_old,
+                premium_rate=13.0,
+                double_low=111.0,
+                price=99.0,
+                ytm=1.1,
+                bond_code="113000",
+                bond_name="最新转债",
+                listing_status="listed",
+                is_listed=True,
+                is_delisted=False,
+            ),
+            CBData(
+                symbol="LATEST_CB",
+                timestamp=ts_new,
+                premium_rate=12.8,
+                double_low=110.8,
+                price=99.5,
+                ytm=1.2,
+                bond_code="113000",
+                bond_name="最新转债",
+                listing_status="listed",
+                is_listed=True,
+                is_delisted=False,
+            ),
+        ]
+    )
+    db.save_sentiment_snapshots(
+        [
+            SentimentData(
+                symbol="SH600519",
+                timestamp=ts_old,
+                name="贵州茅台",
+                hot_score=800,
+                sentiment_pulse=2.0,
+                rank=10,
+            ),
+            SentimentData(
+                symbol="SH600519",
+                timestamp=ts_new,
+                name="贵州茅台",
+                hot_score=850,
+                sentiment_pulse=3.0,
+                rank=6,
+            ),
+        ]
+    )
+
+    futures = db.get_latest_futures_live_snapshots()
+    metals = db.get_latest_metal_snapshots()
+    premiums = db.get_latest_premium_snapshots()
+    convertibles = db.get_latest_convertible_snapshots()
+    sentiments = db.get_latest_sentiment_snapshots()
+
+    with db.get_connection() as conn:
+        conn.execute("DELETE FROM futures_live_snapshot WHERE symbol = 'LATEST_IF'")
+        conn.execute("DELETE FROM metal_arbitrage_snapshot WHERE symbol = 'LATEST_AU:GC'")
+        conn.execute("DELETE FROM premium_arbitrage_snapshot WHERE symbol = 'LATEST_BTC'")
+        conn.execute("DELETE FROM convertible_live_snapshot WHERE symbol = 'LATEST_CB'")
+        conn.execute("DELETE FROM sentiment_live_snapshot WHERE symbol = 'SH600519'")
+        conn.commit()
+
+    futures_match = any(item.symbol == "LATEST_IF" and float(item.price) == 3510 for item in futures)
+    metals_match = any(item.symbol == "LATEST_AU:GC" and float(item.dom_price) == 702 for item in metals)
+    premium_match = any(item.symbol == "LATEST_BTC" and float(item.future_price) == 68160 for item in premiums)
+    cb_match = any(item.symbol == "LATEST_CB" and float(item.price) == 99.5 for item in convertibles)
+    sentiment_match = any(item.symbol == "SH600519" and int(item.rank) == 6 for item in sentiments)
+
+    if not futures_match:
+        print("❌ Latest Snapshot Readers: futures latest row mismatch")
+        return False
+    if not metals_match:
+        print("❌ Latest Snapshot Readers: metals latest row mismatch")
+        return False
+    if not premium_match:
+        print("❌ Latest Snapshot Readers: premium latest row mismatch")
+        return False
+    if not cb_match:
+        print("❌ Latest Snapshot Readers: convertible latest row mismatch")
+        return False
+    if not sentiment_match:
+        print("❌ Latest Snapshot Readers: sentiment latest row mismatch")
+        return False
+
+    logger.info("latest_snapshot_readers_ok")
+    print("✅ Latest Snapshot Readers: OK")
     return True
 
 
@@ -1083,8 +1363,8 @@ def test_fetchers_mock():
     logger.info("premium_mock_loaded", count=len(premium_data))
     print(f"✅ Premium Fetcher (Mock): {len(premium_data)} records")
 
-    if len(premium_data) != 3:
-        print(f"❌ Fetchers Mock: expected 3 valid premium rows, got {len(premium_data)}")
+    if len(premium_data) != 4:
+        print(f"❌ Fetchers Mock: expected 4 valid premium rows, got {len(premium_data)}")
         return False
 
     return True
@@ -1191,11 +1471,12 @@ def test_dashboard_table_ordering():
         return False
 
     premium_data = [
-        PremiumArbitrageData(symbol="A50:CN00Y", timestamp=datetime.now(), asset_group="A50", spot_symbol="XIN9.FGI", spot_name="A50现货", spot_price=14529.54, future_symbol="CN00Y", future_name="A50期指当月连续", future_price=14422.0, premium=-107.54, premium_rate=-0.74, state="backwardation", source_spot="fixture", source_future="fixture"),
-        PremiumArbitrageData(symbol="BTC:BTC=F", timestamp=datetime.now(), asset_group="BTC", spot_symbol="BTC-USD", spot_name="BTC现货", spot_price=68102.59, future_symbol="BTC=F", future_name="BTC期货", future_price=68025.0, premium=-77.59, premium_rate=-0.11, state="backwardation", source_spot="fixture", source_future="fixture"),
+        PremiumArbitrageData(symbol="A50:CN00Y", timestamp=datetime.now(), asset_group="A50", spot_symbol="XIN9.FGI", spot_name="A50现货", spot_price=14529.54, future_symbol="CN00Y", future_name="A50期指当月连续", future_price=14422.0, premium=-107.54, premium_rate=-0.74, state="backwardation", contract_bucket="A50", contract_type="future", bucket_rank=10, source_exchange="A50", source_spot="fixture", source_future="fixture"),
+        PremiumArbitrageData(symbol="BTC:BTC_USDT", timestamp=datetime.now(), asset_group="BTC", spot_symbol="BTC_USDT", spot_name="BTC现货", spot_price=68102.59, future_symbol="BTC_USDT", future_name="BTC永续", future_price=68025.0, premium=-77.59, premium_rate=-0.11, state="backwardation", contract_bucket="PERP", contract_type="swap", bucket_rank=0, source_exchange="Gate", source_spot="fixture", source_future="fixture"),
+        PremiumArbitrageData(symbol="ETH:ETH_USDT_20260626", timestamp=datetime.now(), asset_group="ETH", spot_symbol="ETH_USDT", spot_name="ETH现货", spot_price=2332.72, future_symbol="ETH_USDT_20260626", future_name="ETH近季", future_price=2350.18, premium=17.46, premium_rate=0.75, state="contango", contract_bucket="QUARTERLY_CURRENT", contract_type="future", expiry_ts="2026-06-26T00:00:00", bucket_rank=3, source_exchange="Gate", days_to_maturity=68, source_spot="fixture", source_future="fixture"),
     ]
     premium_df, _ = build_premium_live_tables(premium_data, [])
-    if premium_df["资产组"].tolist() != ["BTC", "A50"]:
+    if premium_df["资产组"].tolist() != ["BTC", "ETH", "A50"]:
         print(f"❌ Dashboard Ordering: unexpected premium order {premium_df['资产组'].tolist()}")
         return False
     if premium_df.columns[: len(PREMIUM_FRONT_COLUMNS)].tolist() != PREMIUM_FRONT_COLUMNS:
@@ -2254,7 +2535,14 @@ def test_retention_cleanup():
     """测试历史报警与各类快照的保留期清理。"""
     logger.info("test_retention_cleanup_start")
 
-    from models.market_data import FuturesData, FuturesMarginData, MetalArbitrageData, PremiumArbitrageData
+    from models.market_data import (
+        CBData,
+        FuturesData,
+        FuturesMarginData,
+        MetalArbitrageData,
+        PremiumArbitrageData,
+        SentimentData,
+    )
 
     db = DBManager()
     old_ts = datetime.now().replace(microsecond=0) - timedelta(days=365)
@@ -2417,10 +2705,62 @@ def test_retention_cleanup():
             ),
         ]
     )
+    db.save_convertible_snapshots(
+        [
+            CBData(
+                symbol="RETENTION_CB_OLD",
+                timestamp=old_ts,
+                premium_rate=15.0,
+                double_low=115.0,
+                price=100.0,
+                ytm=1.0,
+                bond_code="110001",
+                bond_name="旧转债",
+                listing_status="listed",
+                is_listed=True,
+                is_delisted=False,
+            ),
+            CBData(
+                symbol="RETENTION_CB_NEW",
+                timestamp=new_ts,
+                premium_rate=10.0,
+                double_low=108.0,
+                price=101.0,
+                ytm=1.2,
+                bond_code="110002",
+                bond_name="新转债",
+                listing_status="listed",
+                is_listed=True,
+                is_delisted=False,
+            ),
+        ]
+    )
+    db.save_sentiment_snapshots(
+        [
+            SentimentData(
+                symbol="RETENTION_SENTIMENT_OLD",
+                timestamp=old_ts,
+                name="旧情绪",
+                hot_score=500,
+                sentiment_pulse=1.0,
+                rank=50,
+            ),
+            SentimentData(
+                symbol="RETENTION_SENTIMENT_NEW",
+                timestamp=new_ts,
+                name="新情绪",
+                hot_score=700,
+                sentiment_pulse=5.0,
+                rank=8,
+            ),
+        ]
+    )
 
     deleted_alerts = db.purge_alert_history_older_than(30)
     deleted_margins = db.purge_futures_margin_snapshots_older_than(30)
     deleted_futures = db.purge_futures_live_snapshots_older_than(30)
+    deleted_convertibles = db.purge_convertible_snapshots_older_than(30)
+    deleted_sentiments = db.purge_sentiment_snapshots_older_than(30)
     deleted_metals = db.purge_metal_snapshots_older_than(30)
     deleted_premium = db.purge_premium_snapshots_older_than(30)
 
@@ -2457,6 +2797,18 @@ def test_retention_cleanup():
         new_premium_count = conn.execute(
             "SELECT COUNT(*) FROM premium_arbitrage_snapshot WHERE symbol = 'RETENTION_A50_NEW'"
         ).fetchone()[0]
+        old_convertible_count = conn.execute(
+            "SELECT COUNT(*) FROM convertible_live_snapshot WHERE symbol = 'RETENTION_CB_OLD'"
+        ).fetchone()[0]
+        new_convertible_count = conn.execute(
+            "SELECT COUNT(*) FROM convertible_live_snapshot WHERE symbol = 'RETENTION_CB_NEW'"
+        ).fetchone()[0]
+        old_sentiment_count = conn.execute(
+            "SELECT COUNT(*) FROM sentiment_live_snapshot WHERE symbol = 'RETENTION_SENTIMENT_OLD'"
+        ).fetchone()[0]
+        new_sentiment_count = conn.execute(
+            "SELECT COUNT(*) FROM sentiment_live_snapshot WHERE symbol = 'RETENTION_SENTIMENT_NEW'"
+        ).fetchone()[0]
         conn.execute("DELETE FROM alert_history WHERE asset = 'RETENTION_NEW'")
         conn.execute(
             "DELETE FROM futures_margin_snapshot WHERE source = 'retention_new'"
@@ -2467,6 +2819,10 @@ def test_retention_cleanup():
             (new_ts.isoformat(),),
         )
         conn.execute("DELETE FROM premium_arbitrage_snapshot WHERE symbol = 'RETENTION_A50_NEW'")
+        conn.execute("DELETE FROM convertible_live_snapshot WHERE symbol = 'RETENTION_CB_NEW'")
+        conn.execute(
+            "DELETE FROM sentiment_live_snapshot WHERE symbol = 'RETENTION_SENTIMENT_NEW'"
+        )
         conn.commit()
 
     if deleted_alerts < 1 or old_alert_count != 0 or new_alert_count != 1:
@@ -2499,12 +2855,30 @@ def test_retention_cleanup():
             f"(deleted={deleted_premium}, old={old_premium_count}, new={new_premium_count})"
         )
         return False
+    if (
+        deleted_convertibles < 1
+        or old_convertible_count != 0
+        or new_convertible_count != 1
+    ):
+        print(
+            "❌ Retention Cleanup: convertible snapshot cleanup mismatch "
+            f"(deleted={deleted_convertibles}, old={old_convertible_count}, new={new_convertible_count})"
+        )
+        return False
+    if deleted_sentiments < 1 or old_sentiment_count != 0 or new_sentiment_count != 1:
+        print(
+            "❌ Retention Cleanup: sentiment snapshot cleanup mismatch "
+            f"(deleted={deleted_sentiments}, old={old_sentiment_count}, new={new_sentiment_count})"
+        )
+        return False
 
     logger.info(
         "retention_cleanup_ok",
         deleted_alerts=deleted_alerts,
         deleted_margins=deleted_margins,
         deleted_futures=deleted_futures,
+        deleted_convertibles=deleted_convertibles,
+        deleted_sentiments=deleted_sentiments,
         deleted_metals=deleted_metals,
         deleted_premium=deleted_premium,
     )
@@ -2530,7 +2904,7 @@ def test_premium_threshold_local_override():
         shared_path.write_text(
             json.dumps(
                 {
-                    "BTC": {
+                    "BTC_PERP": {
                         "contango_threshold": 0.5,
                         "backwardation_threshold": 0.5,
                         "contango_enabled": True,
@@ -2552,7 +2926,7 @@ def test_premium_threshold_local_override():
         local_path.write_text(
             json.dumps(
                 {
-                    "BTC": {
+                    "BTC_PERP": {
                         "contango_threshold": 1.2,
                         "backwardation_threshold": 1.0,
                         "contango_enabled": True,
@@ -2570,7 +2944,7 @@ def test_premium_threshold_local_override():
         premium_config._threshold_cache = None
 
         try:
-            btc = premium_config.get_effective_premium_threshold("BTC")
+            btc = premium_config.get_effective_premium_threshold("BTC", "PERP")
             a50 = premium_config.get_effective_premium_threshold("A50")
         finally:
             premium_config.get_premium_thresholds_path = original_shared_path_fn
@@ -2656,6 +3030,7 @@ def main():
         ("Threshold Enable Switches", test_threshold_enable_switches),
         ("Alert History Latest Only", test_alert_history_latest_only),
         ("Snapshot Deduplication", test_snapshot_deduplication),
+        ("Latest Snapshot Readers", test_latest_snapshot_readers),
         ("Scheduler Runtime Sync", test_scheduler_runtime_settings_sync),
         ("Cooldown Restore", test_cooldown_restore_roundtrip),
         ("Retention Cleanup", test_retention_cleanup),

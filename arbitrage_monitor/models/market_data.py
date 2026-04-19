@@ -97,6 +97,11 @@ class PremiumArbitrageData(BaseMarketData):
     premium: float
     premium_rate: float
     state: str
+    contract_bucket: str = ""
+    contract_type: str = ""
+    expiry_ts: str = ""
+    bucket_rank: int = 0
+    source_exchange: str = ""
     days_to_maturity: Optional[int] = None
     source_spot: str = ""
     source_future: str = ""
