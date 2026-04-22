@@ -24,6 +24,17 @@ CONTRACT_BUCKET_LABELS: dict[str, str] = {
 CONTRACT_BUCKET_ORDER: dict[str, int] = {
     bucket: index for index, bucket in enumerate(CONTRACT_BUCKETS)
 }
+DELIVERY_SOURCE_BUCKETS: list[str] = [
+    "MONTHLY_CURRENT",
+    "MONTHLY_NEXT",
+    "QUARTERLY_CURRENT",
+    "QUARTERLY_NEXT",
+]
+THRESHOLD_BUCKETS: list[str] = ["PERP", "DELIVERY"]
+THRESHOLD_BUCKET_LABELS: dict[str, str] = {
+    "PERP": "永续",
+    "DELIVERY": "交割合约共用",
+}
 
 CRYPTO_PREMIUM_ASSETS: dict[str, str] = {
     "BTC": "比特币",
@@ -63,7 +74,7 @@ DEFAULT_PREMIUM_THRESHOLDS: dict[str, dict[str, float | bool]] = {
     "A50": _default_threshold_values(),
 }
 for asset_group in CRYPTO_PREMIUM_ASSETS:
-    for bucket in CONTRACT_BUCKETS:
+    for bucket in THRESHOLD_BUCKETS:
         DEFAULT_PREMIUM_THRESHOLDS[f"{asset_group}_{bucket}"] = _default_threshold_values()
 
 
@@ -79,19 +90,28 @@ def get_local_premium_thresholds_path() -> Path:
     return Path(__file__).resolve().parents[1] / "config" / "premium_thresholds.local.json"
 
 
+def map_contract_bucket_to_threshold_bucket(contract_bucket: str | None) -> str:
+    normalized_bucket = str(contract_bucket or "").upper()
+    if normalized_bucket == "PERP":
+        return "PERP"
+    if normalized_bucket in DELIVERY_SOURCE_BUCKETS:
+        return "DELIVERY"
+    return normalized_bucket
+
+
 def build_premium_threshold_key(asset_group: str, contract_bucket: str | None = None) -> str:
     normalized_asset = str(asset_group or "").upper()
-    normalized_bucket = str(contract_bucket or "").upper()
+    normalized_bucket = map_contract_bucket_to_threshold_bucket(contract_bucket)
     if normalized_asset in NON_CRYPTO_PREMIUM_ASSETS:
         return normalized_asset
-    if normalized_bucket in CONTRACT_BUCKET_LABELS:
+    if normalized_bucket in THRESHOLD_BUCKET_LABELS:
         return f"{normalized_asset}_{normalized_bucket}"
     return normalized_asset
 
 
 def split_premium_threshold_key(threshold_key: str) -> tuple[str, str]:
     normalized = str(threshold_key or "").upper()
-    for bucket in CONTRACT_BUCKETS:
+    for bucket in THRESHOLD_BUCKETS:
         suffix = f"_{bucket}"
         if normalized.endswith(suffix):
             return normalized[: -len(suffix)], bucket
@@ -100,7 +120,7 @@ def split_premium_threshold_key(threshold_key: str) -> tuple[str, str]:
 
 def is_crypto_threshold_key(threshold_key: str) -> bool:
     asset_group, contract_bucket = split_premium_threshold_key(threshold_key)
-    return asset_group in CRYPTO_PREMIUM_ASSETS and contract_bucket in CONTRACT_BUCKET_LABELS
+    return asset_group in CRYPTO_PREMIUM_ASSETS and contract_bucket in THRESHOLD_BUCKET_LABELS
 
 
 def _load_threshold_payload(path: Path) -> dict[str, Any] | None:
@@ -151,80 +171,109 @@ def _serialize_thresholds(
     }
 
 
+def _normalize_threshold_values(
+    values: dict[str, Any],
+    default: dict[str, float | bool],
+) -> dict[str, float | bool]:
+    upper = float(
+        values.get(
+            "upper",
+            values.get(
+                "contango_threshold",
+                values.get("backwardation_threshold", default["upper"]),
+            ),
+        )
+    )
+    lower = float(
+        values.get(
+            "lower",
+            -abs(values.get("backwardation_threshold", default["lower"])),
+        )
+    )
+    annualized_upper = float(
+        values.get(
+            "annualized_upper",
+            values.get(
+                "annualized_contango_threshold",
+                values.get(
+                    "annualized_backwardation_threshold",
+                    default["annualized_upper"],
+                ),
+            ),
+        )
+    )
+    annualized_lower = float(
+        values.get(
+            "annualized_lower",
+            -abs(values.get("annualized_backwardation_threshold", default["annualized_lower"])),
+        )
+    )
+    upper_enabled = bool(
+        values.get(
+            "upper_enabled",
+            values.get("contango_enabled", default["upper_enabled"]),
+        )
+    )
+    lower_enabled = bool(
+        values.get(
+            "lower_enabled",
+            values.get("backwardation_enabled", default["lower_enabled"]),
+        )
+    )
+    return {
+        "upper_enabled": upper_enabled,
+        "upper": abs(upper),
+        "annualized_upper_enabled": bool(
+            values.get(
+                "annualized_upper_enabled",
+                values.get("annualized_contango_enabled", upper_enabled),
+            )
+        ),
+        "annualized_upper": abs(annualized_upper),
+        "lower_enabled": lower_enabled,
+        "lower": -abs(lower),
+        "annualized_lower_enabled": bool(
+            values.get(
+                "annualized_lower_enabled",
+                values.get("annualized_backwardation_enabled", lower_enabled),
+            )
+        ),
+        "annualized_lower": -abs(annualized_lower),
+    }
+
+
+def _legacy_threshold_keys(threshold_key: str) -> list[str]:
+    asset_group, threshold_bucket = split_premium_threshold_key(threshold_key)
+    if threshold_bucket == "DELIVERY" and asset_group in CRYPTO_PREMIUM_ASSETS:
+        return [f"{asset_group}_{bucket}" for bucket in DELIVERY_SOURCE_BUCKETS]
+    return []
+
+
+def _select_threshold_payload(
+    raw: dict[str, Any],
+    threshold_key: str,
+) -> dict[str, Any] | None:
+    direct = raw.get(threshold_key)
+    if isinstance(direct, dict):
+        return direct
+
+    for legacy_key in _legacy_threshold_keys(threshold_key):
+        legacy = raw.get(legacy_key)
+        if isinstance(legacy, dict):
+            return legacy
+    return None
+
+
 def _normalize_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[str, float | bool]]:
     normalized = deepcopy(DEFAULT_PREMIUM_THRESHOLDS)
     if not raw:
         return normalized
 
-    for threshold_key, values in raw.items():
-        if threshold_key not in normalized or not isinstance(values, dict):
+    for threshold_key, default in normalized.items():
+        payload = _select_threshold_payload(raw, threshold_key)
+        if not isinstance(payload, dict):
             continue
-        default = normalized[threshold_key]
-        upper = float(
-            values.get(
-                "upper",
-                values.get(
-                    "contango_threshold",
-                    values.get("backwardation_threshold", default["upper"]),
-                ),
-            )
-        )
-        lower = float(
-            values.get(
-                "lower",
-                -abs(values.get("backwardation_threshold", default["lower"])),
-            )
-        )
-        annualized_upper = float(
-            values.get(
-                "annualized_upper",
-                values.get(
-                    "annualized_contango_threshold",
-                    values.get(
-                        "annualized_backwardation_threshold",
-                        default["annualized_upper"],
-                    ),
-                ),
-            )
-        )
-        annualized_lower = float(
-            values.get(
-                "annualized_lower",
-                -abs(values.get("annualized_backwardation_threshold", default["annualized_lower"])),
-            )
-        )
-        upper_enabled = bool(
-            values.get(
-                "upper_enabled",
-                values.get("contango_enabled", default["upper_enabled"]),
-            )
-        )
-        lower_enabled = bool(
-            values.get(
-                "lower_enabled",
-                values.get("backwardation_enabled", default["lower_enabled"]),
-            )
-        )
-        normalized[threshold_key] = {
-            "upper_enabled": upper_enabled,
-            "upper": abs(upper),
-            "annualized_upper_enabled": bool(
-                values.get(
-                    "annualized_upper_enabled",
-                    values.get("annualized_contango_enabled", upper_enabled),
-                )
-            ),
-            "annualized_upper": abs(annualized_upper),
-            "lower_enabled": lower_enabled,
-            "lower": -abs(lower),
-            "annualized_lower_enabled": bool(
-                values.get(
-                    "annualized_lower_enabled",
-                    values.get("annualized_backwardation_enabled", lower_enabled),
-                )
-            ),
-            "annualized_lower": -abs(annualized_lower),
-        }
+        normalized[threshold_key] = _normalize_threshold_values(payload, default)
     return normalized
 
 
@@ -235,7 +284,7 @@ def _normalize_local_thresholds(raw: dict[str, Any] | None) -> dict[str, dict[st
 
     parsed = _normalize_thresholds(raw)
     for threshold_key in DEFAULT_PREMIUM_THRESHOLDS:
-        if threshold_key in parsed and threshold_key in raw:
+        if threshold_key in parsed and _select_threshold_payload(raw, threshold_key) is not None:
             normalized[threshold_key] = parsed[threshold_key]
     return normalized
 
@@ -351,14 +400,14 @@ def get_premium_config_rows() -> list[dict[str, Any]]:
     )
 
     for asset_group, name in CRYPTO_PREMIUM_ASSETS.items():
-        for bucket in CONTRACT_BUCKETS:
+        for bucket in THRESHOLD_BUCKETS:
             threshold_key = build_premium_threshold_key(asset_group, bucket)
             rows.append(
                 {
                     "threshold_key": threshold_key,
                     "asset_group": asset_group,
                     "contract_bucket": bucket,
-                    "bucket_label": CONTRACT_BUCKET_LABELS[bucket],
+                    "bucket_label": THRESHOLD_BUCKET_LABELS[bucket],
                     "name": name,
                     "market": "CRYPTO",
                     **thresholds[threshold_key],

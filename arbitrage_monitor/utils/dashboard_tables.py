@@ -93,8 +93,6 @@ def build_futures_live_tables(
             "%Y-%m-%d"
         )
         direction = "升水" if normalized_rate >= 0 else "贴水"
-        rate_value = normalized_rate if normalized_rate >= 0 else -normalized_rate
-        annualized_value = annualized if annualized >= 0 else -annualized
         rows.append(
             {
                 "名称": item.symbol,
@@ -102,8 +100,8 @@ def build_futures_live_tables(
                 "指数点位": round(item.spot_price, 2),
                 "方向": direction,
                 "价差点数": round(abs(item.spot_price - item.price), 2),
-                "价差率(%)": round(rate_value, 4),
-                "年化价差率(%)": round(annualized_value, 4),
+                "价差率(%)": round(normalized_rate, 4),
+                "年化价差率(%)": round(annualized, 4),
                 "时间": item.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
                 "到期日": maturity_date,
                 "剩余天数": item.days_to_maturity,
@@ -206,8 +204,6 @@ def build_premium_live_tables(
             if item.contract_bucket != "PERP" and item.days_to_maturity is not None
             else None
         )
-        premium_magnitude = abs(item.premium_rate)
-        annualized_magnitude = abs(annualized) if annualized is not None else None
         rows.append(
             {
                 "资产组": item.asset_group,
@@ -221,8 +217,8 @@ def build_premium_live_tables(
                 "期货名称": item.future_name,
                 "期货价格": round(item.future_price, 4),
                 "溢价值": round(item.premium, 4),
-                "溢价率(%)": round(premium_magnitude, 4),
-                "年化溢价率(%)": round(annualized_magnitude, 4) if annualized_magnitude is not None else "N/A",
+                "溢价率(%)": round(item.premium_rate, 4),
+                "年化溢价率(%)": round(annualized, 4) if annualized is not None else "N/A",
                 "剩余天数": item.days_to_maturity if item.days_to_maturity is not None else "N/A",
                 "状态": "升水" if item.state == "contango" else "贴水",
                 "来源交易所": item.source_exchange or "N/A",

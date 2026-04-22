@@ -972,6 +972,7 @@ def test_latest_snapshot_readers():
                 symbol="LATEST_BTC",
                 timestamp=ts_old,
                 asset_group="BTC",
+                contract_bucket="PERP",
                 spot_symbol="BTC-USD",
                 spot_name="BTC现货",
                 spot_price=68000,
@@ -988,6 +989,7 @@ def test_latest_snapshot_readers():
                 symbol="LATEST_BTC",
                 timestamp=ts_new,
                 asset_group="BTC",
+                contract_bucket="PERP",
                 spot_symbol="BTC-USD",
                 spot_name="BTC现货",
                 spot_price=68050,
@@ -2904,6 +2906,12 @@ def test_premium_threshold_local_override():
         shared_path.write_text(
             json.dumps(
                 {
+                    "BTC_DELIVERY": {
+                        "contango_threshold": 0.7,
+                        "backwardation_threshold": 0.6,
+                        "contango_enabled": True,
+                        "backwardation_enabled": True,
+                    },
                     "BTC_PERP": {
                         "contango_threshold": 0.5,
                         "backwardation_threshold": 0.5,
@@ -2926,11 +2934,17 @@ def test_premium_threshold_local_override():
         local_path.write_text(
             json.dumps(
                 {
+                    "BTC_MONTHLY_NEXT": {
+                        "contango_threshold": 1.6,
+                        "backwardation_threshold": 1.4,
+                        "contango_enabled": True,
+                        "backwardation_enabled": False,
+                    },
                     "BTC_PERP": {
                         "contango_threshold": 1.2,
                         "backwardation_threshold": 1.0,
-                        "contango_enabled": True,
-                        "backwardation_enabled": False,
+                        "contango_enabled": False,
+                        "backwardation_enabled": True,
                     }
                 },
                 ensure_ascii=False,
@@ -2945,14 +2959,21 @@ def test_premium_threshold_local_override():
 
         try:
             btc = premium_config.get_effective_premium_threshold("BTC", "PERP")
+            btc_delivery = premium_config.get_effective_premium_threshold("BTC", "QUARTERLY_CURRENT")
             a50 = premium_config.get_effective_premium_threshold("A50")
         finally:
             premium_config.get_premium_thresholds_path = original_shared_path_fn
             premium_config.get_local_premium_thresholds_path = original_local_path_fn
             premium_config._threshold_cache = original_cache
 
-    if float(btc["contango_threshold"]) != 1.2 or bool(btc["backwardation_enabled"]) is not False:
+    if float(btc["contango_threshold"]) != 1.2 or bool(btc["contango_enabled"]) is not False:
         print(f"❌ Premium Threshold Override: BTC override mismatch {btc}")
+        return False
+    if (
+        float(btc_delivery["contango_threshold"]) != 1.6
+        or bool(btc_delivery["backwardation_enabled"]) is not False
+    ):
+        print(f"❌ Premium Threshold Override: BTC delivery override mismatch {btc_delivery}")
         return False
     if float(a50["contango_threshold"]) != 0.5 or float(a50["backwardation_threshold"]) != 0.5:
         print(f"❌ Premium Threshold Override: A50 shared fallback mismatch {a50}")
@@ -2960,6 +2981,90 @@ def test_premium_threshold_local_override():
 
     logger.info("premium_threshold_local_override_ok")
     print("✅ Premium Threshold Local Override: OK")
+    return True
+
+
+def test_premium_threshold_delivery_mapping():
+    """测试旧五桶配置到 PERP / DELIVERY 两档阈值的兼容映射。"""
+    logger.info("test_premium_threshold_delivery_mapping_start")
+
+    import utils.premium_config as premium_config
+
+    original_shared_path_fn = premium_config.get_premium_thresholds_path
+    original_local_path_fn = premium_config.get_local_premium_thresholds_path
+    original_cache = premium_config._threshold_cache
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        shared_path = temp_root / "config" / "premium_thresholds.json"
+        local_path = temp_root / "config" / "premium_thresholds.local.json"
+        shared_path.parent.mkdir(parents=True, exist_ok=True)
+        shared_path.write_text(
+            json.dumps(
+                {
+                    "BTC_MONTHLY_CURRENT": {
+                        "contango_threshold": 0.9,
+                        "backwardation_threshold": 0.8,
+                    },
+                    "BTC_MONTHLY_NEXT": {
+                        "contango_threshold": 1.1,
+                        "backwardation_threshold": 1.0,
+                    },
+                    "BTC_PERP": {
+                        "contango_threshold": 0.4,
+                        "backwardation_threshold": 0.3,
+                    },
+                    "A50": {
+                        "contango_threshold": 0.5,
+                        "backwardation_threshold": 0.5,
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        premium_config.get_premium_thresholds_path = lambda: shared_path
+        premium_config.get_local_premium_thresholds_path = lambda: local_path
+        premium_config._threshold_cache = None
+
+        try:
+            rows = premium_config.get_premium_config_rows()
+            saved_path = premium_config.save_premium_thresholds(
+                {
+                    "BTC_DELIVERY": {
+                        "upper_enabled": True,
+                        "upper": 2.2,
+                        "annualized_upper_enabled": True,
+                        "annualized_upper": 12.0,
+                        "lower_enabled": True,
+                        "lower": -2.0,
+                        "annualized_lower_enabled": True,
+                        "annualized_lower": -12.0,
+                    }
+                }
+            )
+            saved_payload = json.loads(saved_path.read_text(encoding="utf-8"))
+        finally:
+            premium_config.get_premium_thresholds_path = original_shared_path_fn
+            premium_config.get_local_premium_thresholds_path = original_local_path_fn
+            premium_config._threshold_cache = original_cache
+
+    crypto_btc_rows = [row for row in rows if row["asset_group"] == "BTC"]
+    if {row["contract_bucket"] for row in crypto_btc_rows} != {"PERP", "DELIVERY"}:
+        print(f"❌ Premium Threshold Delivery Mapping: unexpected BTC rows {crypto_btc_rows}")
+        return False
+    delivery_row = next(row for row in crypto_btc_rows if row["contract_bucket"] == "DELIVERY")
+    if float(delivery_row["contango_threshold"]) != 0.9:
+        print(f"❌ Premium Threshold Delivery Mapping: legacy delivery merge mismatch {delivery_row}")
+        return False
+    if set(saved_payload) != {"BTC_DELIVERY"}:
+        print(f"❌ Premium Threshold Delivery Mapping: saved keys mismatch {saved_payload}")
+        return False
+
+    logger.info("premium_threshold_delivery_mapping_ok")
+    print("✅ Premium Threshold Delivery Mapping: OK")
     return True
 
 
@@ -3043,6 +3148,7 @@ def main():
         ("Metals Threshold Local Override", test_metals_threshold_local_override),
         ("Futures Threshold Local Override", test_futures_threshold_local_override),
         ("Premium Threshold Local Override", test_premium_threshold_local_override),
+        ("Premium Threshold Delivery Mapping", test_premium_threshold_delivery_mapping),
         ("Source Health Tracking", test_source_health_tracking),
         ("Config Audit History", test_config_audit_history),
         ("Job Run Status Tracking", test_job_run_status_tracking),

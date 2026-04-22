@@ -289,6 +289,43 @@ def fetch_recent_premium_snapshot_history(limit: int = 200) -> pd.DataFrame:
     return df
 
 
+def filter_premium_table(df: pd.DataFrame, *, a50_only: bool) -> pd.DataFrame:
+    if df.empty or "资产组" not in df.columns:
+        return df
+    if a50_only:
+        return df[df["资产组"] == "A50"].copy()
+    return df[df["资产组"] != "A50"].copy()
+
+
+def filter_premium_signal_table(df: pd.DataFrame, *, a50_only: bool) -> pd.DataFrame:
+    if df.empty or "标的" not in df.columns:
+        return df
+    mask = df["标的"].astype(str).str.startswith("A50 ")
+    return df[mask].copy() if a50_only else df[~mask].copy()
+
+
+def prepare_premium_history_table(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    history_df = df.copy()
+    if "days_to_maturity" in history_df.columns:
+        annualized_series = history_df.apply(
+            lambda row: (
+                round(row["premium_rate"] * (365 / max(int(row["days_to_maturity"]), 1)), 4)
+                if pd.notna(row["days_to_maturity"])
+                else "N/A"
+            ),
+            axis=1,
+        )
+        history_df["annualized_premium_rate"] = annualized_series
+    if "state" in history_df.columns:
+        history_df["direction"] = history_df["state"].map(
+            {"contango": "升水", "backwardation": "贴水"}
+        ).fillna(history_df["state"])
+    history_df["fetched_at"] = history_df["fetched_at"].dt.strftime("%Y-%m-%d %H:%M:%S")
+    return history_df
+
+
 @st.cache_data(ttl=30)
 def fetch_source_health_table() -> pd.DataFrame:
     rows = db_manager.get_source_health_statuses()
@@ -539,7 +576,7 @@ sidebar.caption("各模块阈值与时钟都在“参数设置”页。")
 
 view = st.radio(
     "模块",
-    ["中金所股指", "可转债", "舆情热度", "金属套利", "A50 以及加密货币", "报警记录", "系统状态", "软件说明"],
+    ["中金所股指", "可转债", "舆情热度", "金属套利", "A50", "加密货币", "报警记录", "系统状态", "软件说明"],
     horizontal=True,
     label_visibility="collapsed",
 )
@@ -728,25 +765,30 @@ elif view == "金属套利":
         )
         st.dataframe(history_df, width="stretch", hide_index=True)
 
-elif view == "A50 以及加密货币":
+elif view in {"A50", "加密货币"}:
+    a50_only = view == "A50"
     left, mid, right = st.columns([1, 1.2, 4.8])
     refresh_snapshot = False
     force_refresh = False
     with left:
-        refresh_snapshot = st.button("刷新显示", key="refresh_premium_snapshot")
+        refresh_snapshot = st.button("刷新显示", key=f"refresh_premium_snapshot_{view}")
     with mid:
-        force_refresh = st.button("强制抓新", key="refresh_premium_live")
+        force_refresh = st.button("强制抓新", key=f"refresh_premium_live_{view}")
     with right:
-        st.markdown("#### A50 以及加密货币")
+        st.markdown(f"#### {view}")
 
     if hasattr(st, "page_link"):
-        st.page_link("pages/1_参数设置.py", label="去调整 A50 与加密货币阈值和模块时钟", icon="⚙️")
-    st.caption("A50 维持原有多合约；加密资产池按 Top10 币种展示永续、当月、次月、近季、次季可用行情。")
+        target_label = "去调整 A50 阈值和模块时钟" if a50_only else "去调整加密货币阈值和模块时钟"
+        st.page_link("pages/1_参数设置.py", label=target_label, icon="⚙️")
+    if a50_only:
+        st.caption("A50 维持原有多合约展示，继续复用 premium 模块的抓取与快照链路。")
+    else:
+        st.caption("加密资产池按 Top10 币种展示永续、当月、次月、近季、次季可用行情。")
 
     if refresh_snapshot or force_refresh:
-        st.session_state.pop("premium_asset_filter", None)
+        st.session_state.pop(f"premium_asset_filter_{view}", None)
 
-    with st.spinner("加载 A50 与加密货币实时数据..."):
+    with st.spinner(f"加载{view}实时数据..."):
         if force_refresh:
             premium_df, premium_signal_df, premium_fetched_at, premium_source = force_refresh_live_view(
                 "premium_live", fetch_premium_live_view, fetch_premium_snapshot_view
@@ -759,49 +801,44 @@ elif view == "A50 以及加密货币":
             )
 
     render_snapshot_meta("premium", premium_fetched_at, premium_source, "premium_live")
+    premium_df = filter_premium_table(premium_df, a50_only=a50_only)
+    premium_signal_df = filter_premium_signal_table(premium_signal_df, a50_only=a50_only)
 
-    if not premium_df.empty:
+    if not premium_df.empty and not a50_only:
         asset_filter = st.multiselect(
             "资产组筛选",
             options=sorted(premium_df["资产组"].unique().tolist()),
             default=sorted(premium_df["资产组"].unique().tolist()),
-            key="premium_asset_filter",
+            key=f"premium_asset_filter_{view}",
         )
         if asset_filter:
             premium_df = premium_df[premium_df["资产组"].isin(asset_filter)]
+            if not premium_signal_df.empty and "标的" in premium_signal_df.columns:
+                premium_signal_df = premium_signal_df[
+                    premium_signal_df["标的"].astype(str).str.startswith(
+                        tuple(f"{asset} " for asset in asset_filter)
+                    )
+                ]
 
     st.dataframe(premium_df, width="stretch", hide_index=True)
     st.caption(f"当前溢价对数：{len(premium_df)}")
 
     st.markdown("#### 当前触发信号")
     if premium_signal_df.empty:
-        st.info("当前无 A50 或加密货币触发信号")
+        st.info(f"当前无{view}触发信号")
     else:
         st.dataframe(premium_signal_df, width="stretch", hide_index=True)
 
     st.markdown("#### 最近快照历史")
-    history_limit = st.slider("历史快照条数", 20, 500, 100, 20, key="premium_history_limit")
+    history_limit = st.slider("历史快照条数", 20, 500, 100, 20, key=f"premium_history_limit_{view}")
     history_df = fetch_recent_premium_snapshot_history(limit=history_limit)
+    history_df = prepare_premium_history_table(history_df)
+    history_df = history_df[
+        history_df["asset_group"].eq("A50") if a50_only else history_df["asset_group"].ne("A50")
+    ].copy()
     if history_df.empty:
-        st.info("暂无 A50 与加密货币快照历史")
+        st.info(f"暂无{view}快照历史")
     else:
-        if "days_to_maturity" in history_df.columns:
-            annualized_series = history_df.apply(
-                lambda row: (
-                    round(abs(row["premium_rate"]) * (365 / max(int(row["days_to_maturity"]), 1)), 4)
-                    if pd.notna(row["days_to_maturity"])
-                    else "N/A"
-                ),
-                axis=1,
-            )
-            history_df["annualized_premium_rate"] = annualized_series
-        if "state" in history_df.columns:
-            history_df["direction"] = history_df["state"].map(
-                {"contango": "升水", "backwardation": "贴水"}
-            ).fillna(history_df["state"])
-        if "premium_rate" in history_df.columns:
-            history_df["premium_rate"] = history_df["premium_rate"].abs()
-        history_df["fetched_at"] = history_df["fetched_at"].dt.strftime("%Y-%m-%d %H:%M:%S")
         st.dataframe(history_df, width="stretch", hide_index=True)
 
 elif view == "报警记录":

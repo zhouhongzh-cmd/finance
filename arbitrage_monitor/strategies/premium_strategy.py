@@ -33,8 +33,7 @@ class PremiumArbitrageStrategy(BaseStrategy):
                 annualized_premium_rate = item.premium_rate * (
                     365 / max(int(item.days_to_maturity), 1)
                 )
-            premium_magnitude = abs(item.premium_rate)
-            annualized_magnitude = abs(annualized_premium_rate) if annualized_premium_rate is not None else None
+            annualized_display_value = annualized_premium_rate if annualized_premium_rate is not None else None
 
             direction = None
             ordinary_triggered = False
@@ -68,12 +67,12 @@ class PremiumArbitrageStrategy(BaseStrategy):
                     or annualized_premium_rate <= annualized_lower_threshold
                 )
                 ordinary_ratio = (
-                    premium_magnitude / abs(lower_threshold)
+                    abs(item.premium_rate) / abs(lower_threshold)
                     if lower_threshold != 0
                     else 0.0
                 )
                 annualized_ratio = (
-                    annualized_magnitude / abs(annualized_lower_threshold)
+                    abs(annualized_premium_rate) / abs(annualized_lower_threshold)
                     if annualized_required and annualized_lower_threshold != 0
                     else ordinary_ratio
                 )
@@ -90,8 +89,8 @@ class PremiumArbitrageStrategy(BaseStrategy):
                 else f"A50 {item.future_name or item.future_symbol}"
             )
             annualized_display = (
-                f"{annualized_magnitude:.2f}%"
-                if annualized_magnitude is not None
+                f"{annualized_display_value:.2f}%"
+                if annualized_display_value is not None
                 else "N/A（永续或未提供交割日）"
             )
             if direction == "升水":
@@ -120,7 +119,7 @@ class PremiumArbitrageStrategy(BaseStrategy):
                 f"期货：{item.future_name} ({item.future_symbol}) {item.future_price:,.2f}\n"
                 f"方向：{direction}\n"
                 f"溢价值：{item.premium:+,.2f}\n"
-                f"溢价率：{premium_magnitude:.2f}%\n"
+                f"溢价率：{item.premium_rate:.2f}%\n"
                 f"剩余天数：{item.days_to_maturity if item.days_to_maturity is not None else 'N/A'}\n"
                 f"年化溢价率：{annualized_display}\n"
                 f"{ordinary_line}\n"

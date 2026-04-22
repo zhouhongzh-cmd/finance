@@ -22,8 +22,9 @@ from utils.metals_config import (
     save_metals_thresholds,
 )
 from utils.premium_config import (
+    CRYPTO_PREMIUM_ASSETS,
+    DEFAULT_PREMIUM_THRESHOLDS,
     get_premium_config_rows,
-    reset_premium_thresholds,
     save_premium_thresholds,
 )
 from utils.runtime_config import apply_runtime_updates, get_gui_config_values, write_env_updates
@@ -188,28 +189,34 @@ def render_history_table(
     st.dataframe(filtered, use_container_width=True, hide_index=True)
 
 
-def render_time_window(prefix: str, values: dict[str, object]) -> dict[str, str]:
+def render_time_window(
+    prefix: str,
+    values: dict[str, object],
+    *,
+    key_prefix: str | None = None,
+) -> dict[str, str]:
+    key_base = key_prefix or prefix
     st.markdown("**时间窗口**")
     col1, col2 = st.columns(2)
     with col1:
         morning_start = st.text_input(
-            "上午开始", value=str(values[f"{prefix}_MORNING_START"]), key=f"{prefix}_morning_start"
+            "上午开始", value=str(values[f"{prefix}_MORNING_START"]), key=f"{key_base}_morning_start"
         )
         afternoon_start = st.text_input(
-            "下午开始", value=str(values[f"{prefix}_AFTERNOON_START"]), key=f"{prefix}_afternoon_start"
+            "下午开始", value=str(values[f"{prefix}_AFTERNOON_START"]), key=f"{key_base}_afternoon_start"
         )
         night_start = st.text_input(
-            "夜盘开始", value=str(values[f"{prefix}_NIGHT_START"]), key=f"{prefix}_night_start"
+            "夜盘开始", value=str(values[f"{prefix}_NIGHT_START"]), key=f"{key_base}_night_start"
         )
     with col2:
         morning_end = st.text_input(
-            "上午结束", value=str(values[f"{prefix}_MORNING_END"]), key=f"{prefix}_morning_end"
+            "上午结束", value=str(values[f"{prefix}_MORNING_END"]), key=f"{key_base}_morning_end"
         )
         afternoon_end = st.text_input(
-            "下午结束", value=str(values[f"{prefix}_AFTERNOON_END"]), key=f"{prefix}_afternoon_end"
+            "下午结束", value=str(values[f"{prefix}_AFTERNOON_END"]), key=f"{key_base}_afternoon_end"
         )
         night_end = st.text_input(
-            "夜盘结束", value=str(values[f"{prefix}_NIGHT_END"]), key=f"{prefix}_night_end"
+            "夜盘结束", value=str(values[f"{prefix}_NIGHT_END"]), key=f"{key_base}_night_end"
         )
 
     return {
@@ -226,6 +233,30 @@ def render_threshold_header(widths: list[float], labels: list[str]) -> None:
     header_cols = st.columns(widths)
     for col, label in zip(header_cols, labels):
         col.markdown(f"**{label}**")
+
+
+def build_premium_threshold_payload(rows: list[dict[str, object]]) -> dict[str, dict[str, float | bool]]:
+    payload: dict[str, dict[str, float | bool]] = {}
+    for row in rows:
+        threshold_key = str(row["threshold_key"])
+        payload[threshold_key] = {
+            "upper_enabled": bool(row["upper_enabled"]),
+            "upper": float(row["upper"]),
+            "annualized_upper_enabled": bool(row["annualized_upper_enabled"]),
+            "annualized_upper": float(row["annualized_upper"]),
+            "lower_enabled": bool(row["lower_enabled"]),
+            "lower": float(row["lower"]),
+            "annualized_lower_enabled": bool(row["annualized_lower_enabled"]),
+            "annualized_lower": float(row["annualized_lower"]),
+        }
+    return payload
+
+
+def reset_premium_threshold_group(threshold_keys: list[str]) -> None:
+    threshold_payload = build_premium_threshold_payload(get_premium_config_rows())
+    for threshold_key in threshold_keys:
+        threshold_payload[threshold_key] = dict(DEFAULT_PREMIUM_THRESHOLDS[threshold_key])
+    save_premium_thresholds(threshold_payload)
 
 
 def save_runtime_module(updates: dict[str, object], tracked_fields: list[str], *, success_text: str) -> None:
@@ -410,14 +441,23 @@ with st.expander("股指期货", expanded=True):
     render_history_table(prefixes=("ENABLE_FUTURES_", "FUTURES_", "FUTURES_THRESHOLD."))
 
 
-with st.expander("A50 以及加密货币", expanded=False):
-    st.caption("A50 保持多合约监控；加密资产池按 Top10 币种展开为永续、当月、次月、近季、次季五类合约桶。")
-    premium_rows = get_premium_config_rows()
-    premium_before = flatten_premium_threshold_values(premium_rows)
-    with st.form("premium_module_form"):
+premium_rows = get_premium_config_rows()
+premium_before = flatten_premium_threshold_values(premium_rows)
+a50_rows = [row for row in premium_rows if row["market"] == "A50"]
+crypto_rows = [row for row in premium_rows if row["market"] == "CRYPTO"]
+a50_threshold_keys = [str(row["threshold_key"]) for row in a50_rows]
+crypto_threshold_keys = [str(row["threshold_key"]) for row in crypto_rows]
+crypto_threshold_prefixes = tuple(
+    f"PREMIUM_THRESHOLD.{asset_group}_" for asset_group in CRYPTO_PREMIUM_ASSETS
+)
+
+
+with st.expander("A50", expanded=False):
+    st.caption("A50 区块内直接维护运行时和阈值。运行时仍对应同一套 premium 模块字段，不会拆成第二套任务。")
+    with st.form("premium_a50_form"):
         st.markdown("**模块开关**")
         col1, col2, col3 = st.columns(3)
-        enable_premium = col1.toggle("启用 A50 与加密货币监控", value=current["ENABLE_PREMIUM_MONITOR"])
+        enable_premium = col1.toggle("启用 A50 监控", value=current["ENABLE_PREMIUM_MONITOR"])
         enable_premium_cruise = col2.checkbox("启用巡航", value=current["ENABLE_PREMIUM_CRUISE"])
         enable_premium_watch = col3.checkbox("启用盯盘", value=current["ENABLE_PREMIUM_WATCH"])
 
@@ -429,6 +469,7 @@ with st.expander("A50 以及加密货币", expanded=False):
             max_value=1440,
             value=int(current["PREMIUM_CRUISE_INTERVAL_MINUTES"]),
             step=1,
+            key="premium_a50_cruise",
         )
         premium_watch = col2.number_input(
             "盯盘间隔 (秒)",
@@ -436,9 +477,10 @@ with st.expander("A50 以及加密货币", expanded=False):
             max_value=3600,
             value=int(current["PREMIUM_WATCH_INTERVAL_SECONDS"]),
             step=5,
+            key="premium_a50_watch",
         )
 
-        premium_windows = render_time_window("PREMIUM", current)
+        premium_windows = render_time_window("PREMIUM", current, key_prefix="PREMIUM_A50")
 
         st.markdown("**A50 阈值**")
         premium_threshold_widths = [0.9, 1.2, 0.8, 1, 0.8, 1.1, 0.8, 1, 0.8, 1.1]
@@ -457,10 +499,7 @@ with st.expander("A50 以及加密货币", expanded=False):
                 "年化贴水阈值(%)",
             ],
         )
-        premium_threshold_updates: dict[str, dict[str, float | bool]] = {}
-        a50_rows = [row for row in premium_rows if row["market"] == "A50"]
-        crypto_rows = [row for row in premium_rows if row["market"] == "CRYPTO"]
-
+        premium_threshold_updates = build_premium_threshold_payload(premium_rows)
         for row in a50_rows:
             cols = st.columns(premium_threshold_widths)
             threshold_key = row["threshold_key"]
@@ -470,7 +509,7 @@ with st.expander("A50 以及加密货币", expanded=False):
                 f"{threshold_key}_upper_enabled",
                 value=bool(row.get("upper_enabled", True)),
                 label_visibility="collapsed",
-                key=f"premium_upper_enabled_{threshold_key}",
+                key=f"premium_a50_upper_enabled_{threshold_key}",
             )
             upper_threshold = cols[3].number_input(
                 f"{threshold_key}_upper",
@@ -478,13 +517,13 @@ with st.expander("A50 以及加密货币", expanded=False):
                 value=float(row["upper"]),
                 step=0.1,
                 label_visibility="collapsed",
-                key=f"premium_upper_{threshold_key}",
+                key=f"premium_a50_upper_{threshold_key}",
             )
             annualized_upper_enabled = cols[4].checkbox(
                 f"{threshold_key}_annualized_upper_enabled",
                 value=bool(row.get("annualized_upper_enabled", True)),
                 label_visibility="collapsed",
-                key=f"premium_annualized_upper_enabled_{threshold_key}",
+                key=f"premium_a50_annualized_upper_enabled_{threshold_key}",
             )
             annualized_upper_threshold = cols[5].number_input(
                 f"{threshold_key}_annualized_upper",
@@ -492,13 +531,13 @@ with st.expander("A50 以及加密货币", expanded=False):
                 value=float(row["annualized_upper"]),
                 step=0.1,
                 label_visibility="collapsed",
-                key=f"premium_annualized_upper_{threshold_key}",
+                key=f"premium_a50_annualized_upper_{threshold_key}",
             )
             lower_enabled = cols[6].checkbox(
                 f"{threshold_key}_lower_enabled",
                 value=bool(row.get("lower_enabled", True)),
                 label_visibility="collapsed",
-                key=f"premium_lower_enabled_{threshold_key}",
+                key=f"premium_a50_lower_enabled_{threshold_key}",
             )
             lower_threshold = cols[7].number_input(
                 f"{threshold_key}_lower",
@@ -506,13 +545,13 @@ with st.expander("A50 以及加密货币", expanded=False):
                 value=float(row["lower"]),
                 step=0.1,
                 label_visibility="collapsed",
-                key=f"premium_lower_{threshold_key}",
+                key=f"premium_a50_lower_{threshold_key}",
             )
             annualized_lower_enabled = cols[8].checkbox(
                 f"{threshold_key}_annualized_lower_enabled",
                 value=bool(row.get("annualized_lower_enabled", True)),
                 label_visibility="collapsed",
-                key=f"premium_annualized_lower_enabled_{threshold_key}",
+                key=f"premium_a50_annualized_lower_enabled_{threshold_key}",
             )
             annualized_lower_threshold = cols[9].number_input(
                 f"{threshold_key}_annualized_lower",
@@ -520,7 +559,7 @@ with st.expander("A50 以及加密货币", expanded=False):
                 value=float(row["annualized_lower"]),
                 step=0.1,
                 label_visibility="collapsed",
-                key=f"premium_annualized_lower_{threshold_key}",
+                key=f"premium_a50_annualized_lower_{threshold_key}",
             )
             premium_threshold_updates[threshold_key] = {
                 "upper_enabled": bool(upper_enabled),
@@ -533,13 +572,90 @@ with st.expander("A50 以及加密货币", expanded=False):
                 "annualized_lower": float(annualized_lower_threshold),
             }
 
-        st.markdown("**加密资产五桶阈值**")
-        crypto_threshold_widths = [0.9, 0.8, 1.1, 0.8, 1, 0.8, 1.1, 0.8, 1, 0.8, 1.1]
+        save_premium_a50 = st.form_submit_button("保存 A50 设置", use_container_width=True)
+
+    if save_premium_a50:
+        premium_runtime_updates = {
+            "ENABLE_PREMIUM_MONITOR": enable_premium,
+            "ENABLE_PREMIUM_CRUISE": enable_premium_cruise,
+            "ENABLE_PREMIUM_WATCH": enable_premium_watch,
+            "PREMIUM_CRUISE_INTERVAL_MINUTES": int(premium_cruise),
+            "PREMIUM_WATCH_INTERVAL_SECONDS": int(premium_watch),
+        }
+        premium_runtime_updates.update(premium_windows)
+        try:
+            save_runtime_module(
+                premium_runtime_updates,
+                PREMIUM_RUNTIME_FIELDS,
+                success_text="A50 运行配置",
+            )
+            path = save_premium_thresholds(premium_threshold_updates)
+            after_rows = get_premium_config_rows()
+            record_config_changes(
+                premium_before,
+                flatten_premium_threshold_values(after_rows),
+                source="dashboard_gui",
+                destination="local_override" if path.name.endswith(".local.json") else "shared_baseline",
+            )
+            st.success(f"A50 阈值已保存到 {path.name}。")
+        except Exception as exc:
+            st.error(f"保存 A50 设置失败：{exc}")
+
+    if st.button("恢复 A50 阈值默认值", key="reset_premium_a50", use_container_width=True):
+        try:
+            reset_premium_threshold_group(a50_threshold_keys)
+            after_rows = get_premium_config_rows()
+            record_config_changes(
+                premium_before,
+                flatten_premium_threshold_values(after_rows),
+                source="dashboard_gui",
+                destination="local_override",
+            )
+            st.success("A50 阈值已恢复为默认值。")
+        except Exception as exc:
+            st.error(f"恢复 A50 阈值失败：{exc}")
+
+    st.markdown("**最近变更**")
+    render_history_table(prefixes=("ENABLE_PREMIUM_", "PREMIUM_", "PREMIUM_THRESHOLD.A50"))
+
+
+with st.expander("加密货币", expanded=False):
+    st.caption("加密货币区块内直接维护运行时和阈值。每个币种只保留两组阈值：永续单独一组，其他交割合约共用一组。")
+    with st.form("premium_crypto_form"):
+        st.markdown("**模块开关**")
+        col1, col2, col3 = st.columns(3)
+        enable_premium = col1.toggle("启用加密货币监控", value=current["ENABLE_PREMIUM_MONITOR"])
+        enable_premium_cruise = col2.checkbox("启用巡航", value=current["ENABLE_PREMIUM_CRUISE"])
+        enable_premium_watch = col3.checkbox("启用盯盘", value=current["ENABLE_PREMIUM_WATCH"])
+
+        st.markdown("**运行频率**")
+        col1, col2 = st.columns(2)
+        premium_cruise = col1.number_input(
+            "巡航间隔 (分钟)",
+            min_value=1,
+            max_value=1440,
+            value=int(current["PREMIUM_CRUISE_INTERVAL_MINUTES"]),
+            step=1,
+            key="premium_crypto_cruise",
+        )
+        premium_watch = col2.number_input(
+            "盯盘间隔 (秒)",
+            min_value=5,
+            max_value=3600,
+            value=int(current["PREMIUM_WATCH_INTERVAL_SECONDS"]),
+            step=5,
+            key="premium_crypto_watch",
+        )
+
+        premium_windows = render_time_window("PREMIUM", current, key_prefix="PREMIUM_CRYPTO")
+
+        st.markdown("**加密货币阈值**")
+        crypto_threshold_widths = [0.9, 0.9, 1.1, 0.8, 1, 0.8, 1.1, 0.8, 1, 0.8, 1.1]
         render_threshold_header(
             crypto_threshold_widths,
             [
                 "资产",
-                "合约桶",
+                "阈值组",
                 "名称",
                 "升水启用",
                 "升水阈值(%)",
@@ -551,6 +667,7 @@ with st.expander("A50 以及加密货币", expanded=False):
                 "年化贴水阈值(%)",
             ],
         )
+        premium_threshold_updates = build_premium_threshold_payload(premium_rows)
         for row in crypto_rows:
             cols = st.columns(crypto_threshold_widths)
             threshold_key = row["threshold_key"]
@@ -561,7 +678,7 @@ with st.expander("A50 以及加密货币", expanded=False):
                 f"{threshold_key}_upper_enabled",
                 value=bool(row.get("upper_enabled", True)),
                 label_visibility="collapsed",
-                key=f"premium_upper_enabled_{threshold_key}",
+                key=f"premium_crypto_upper_enabled_{threshold_key}",
             )
             upper_threshold = cols[4].number_input(
                 f"{threshold_key}_upper",
@@ -569,13 +686,13 @@ with st.expander("A50 以及加密货币", expanded=False):
                 value=float(row["upper"]),
                 step=0.1,
                 label_visibility="collapsed",
-                key=f"premium_upper_{threshold_key}",
+                key=f"premium_crypto_upper_{threshold_key}",
             )
             annualized_upper_enabled = cols[5].checkbox(
                 f"{threshold_key}_annualized_upper_enabled",
                 value=bool(row.get("annualized_upper_enabled", True)),
                 label_visibility="collapsed",
-                key=f"premium_annualized_upper_enabled_{threshold_key}",
+                key=f"premium_crypto_annualized_upper_enabled_{threshold_key}",
             )
             annualized_upper_threshold = cols[6].number_input(
                 f"{threshold_key}_annualized_upper",
@@ -583,13 +700,13 @@ with st.expander("A50 以及加密货币", expanded=False):
                 value=float(row["annualized_upper"]),
                 step=0.1,
                 label_visibility="collapsed",
-                key=f"premium_annualized_upper_{threshold_key}",
+                key=f"premium_crypto_annualized_upper_{threshold_key}",
             )
             lower_enabled = cols[7].checkbox(
                 f"{threshold_key}_lower_enabled",
                 value=bool(row.get("lower_enabled", True)),
                 label_visibility="collapsed",
-                key=f"premium_lower_enabled_{threshold_key}",
+                key=f"premium_crypto_lower_enabled_{threshold_key}",
             )
             lower_threshold = cols[8].number_input(
                 f"{threshold_key}_lower",
@@ -597,13 +714,13 @@ with st.expander("A50 以及加密货币", expanded=False):
                 value=float(row["lower"]),
                 step=0.1,
                 label_visibility="collapsed",
-                key=f"premium_lower_{threshold_key}",
+                key=f"premium_crypto_lower_{threshold_key}",
             )
             annualized_lower_enabled = cols[9].checkbox(
                 f"{threshold_key}_annualized_lower_enabled",
                 value=bool(row.get("annualized_lower_enabled", True)),
                 label_visibility="collapsed",
-                key=f"premium_annualized_lower_enabled_{threshold_key}",
+                key=f"premium_crypto_annualized_lower_enabled_{threshold_key}",
             )
             annualized_lower_threshold = cols[10].number_input(
                 f"{threshold_key}_annualized_lower",
@@ -611,7 +728,7 @@ with st.expander("A50 以及加密货币", expanded=False):
                 value=float(row["annualized_lower"]),
                 step=0.1,
                 label_visibility="collapsed",
-                key=f"premium_annualized_lower_{threshold_key}",
+                key=f"premium_crypto_annualized_lower_{threshold_key}",
             )
             premium_threshold_updates[threshold_key] = {
                 "upper_enabled": bool(upper_enabled),
@@ -624,10 +741,9 @@ with st.expander("A50 以及加密货币", expanded=False):
                 "annualized_lower": float(annualized_lower_threshold),
             }
 
-        save_premium = st.form_submit_button("保存 A50 与加密货币设置", use_container_width=True)
-        reset_premium = st.form_submit_button("恢复 A50 与加密货币默认值")
+        save_premium_crypto = st.form_submit_button("保存加密货币设置", use_container_width=True)
 
-    if save_premium:
+    if save_premium_crypto:
         premium_runtime_updates = {
             "ENABLE_PREMIUM_MONITOR": enable_premium,
             "ENABLE_PREMIUM_CRUISE": enable_premium_cruise,
@@ -637,7 +753,11 @@ with st.expander("A50 以及加密货币", expanded=False):
         }
         premium_runtime_updates.update(premium_windows)
         try:
-            save_runtime_module(premium_runtime_updates, PREMIUM_RUNTIME_FIELDS, success_text="A50 与加密货币运行配置")
+            save_runtime_module(
+                premium_runtime_updates,
+                PREMIUM_RUNTIME_FIELDS,
+                success_text="加密货币运行配置",
+            )
             path = save_premium_thresholds(premium_threshold_updates)
             after_rows = get_premium_config_rows()
             record_config_changes(
@@ -646,26 +766,26 @@ with st.expander("A50 以及加密货币", expanded=False):
                 source="dashboard_gui",
                 destination="local_override" if path.name.endswith(".local.json") else "shared_baseline",
             )
-            st.success(f"A50 与加密货币阈值已保存到 {path.name}。")
+            st.success(f"加密货币阈值已保存到 {path.name}。")
         except Exception as exc:
-            st.error(f"保存 A50 与加密货币设置失败：{exc}")
+            st.error(f"保存加密货币设置失败：{exc}")
 
-    if reset_premium:
+    if st.button("恢复加密货币阈值默认值", key="reset_premium_crypto", use_container_width=True):
         try:
-            path = reset_premium_thresholds()
+            reset_premium_threshold_group(crypto_threshold_keys)
             after_rows = get_premium_config_rows()
             record_config_changes(
                 premium_before,
                 flatten_premium_threshold_values(after_rows),
                 source="dashboard_gui",
-                destination="shared_baseline",
+                destination="local_override",
             )
-            st.success(f"A50 与加密货币阈值已恢复为共享基线，当前使用 {path.name}。")
+            st.success("加密货币阈值已恢复为默认值。")
         except Exception as exc:
-            st.error(f"恢复 A50 与加密货币阈值失败：{exc}")
+            st.error(f"恢复加密货币阈值失败：{exc}")
 
     st.markdown("**最近变更**")
-    render_history_table(prefixes=("ENABLE_PREMIUM_", "PREMIUM_", "PREMIUM_THRESHOLD."))
+    render_history_table(prefixes=("ENABLE_PREMIUM_", "PREMIUM_", *crypto_threshold_prefixes))
 
 
 with st.expander("可转债", expanded=False):
