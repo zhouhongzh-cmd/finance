@@ -3,7 +3,7 @@
 > 日期: `2026-04-18`
 > 目标: 为“币圈期现套利 / cash-and-carry”建立公开数据源台账，覆盖更多交易所的现货、永续、交割合约市场数据能力，并补充稳定币存款费率数据可用性结论
 > 当前基线: `docs/requirements_codex_v1.md`
-> 说明: 本文档当前属于研究与台账，不代表仓库已正式启动 `crypto` 生产模块
+> 说明: 本文档最初用于研究与台账；截至 `2026-04-22`，仓库已基于其中的 `Gate + Top10 固定白名单 + 合约桶` 结论落地第一版生产实现，稳定币费率部分仍保持研究状态
 
 ---
 
@@ -33,7 +33,33 @@
    - `docs/requirements_codex_v1.md`
    - `docs/api_registry.md`
 
-### 1.3 固定白名单资产池
+### 1.3 当前仓库落地状态
+
+截至 `2026-04-22`，仓库内已落实：
+
+- 固定白名单 `Top10` 加密资产池：
+  - `BTC`
+  - `ETH`
+  - `XRP`
+  - `BNB`
+  - `SOL`
+  - `DOGE`
+  - `ADA`
+  - `TRX`
+  - `LINK`
+  - `AVAX`
+- 现货与期货腿当前统一来自 `Gate` 公开 REST
+- 合约桶当前统一为：
+  - `PERP`
+  - `MONTHLY_CURRENT`
+  - `MONTHLY_NEXT`
+  - `QUARTERLY_CURRENT`
+  - `QUARTERLY_NEXT`
+- 看板已改为“快照优先 + 手动强制抓新”
+- 快照回读链路已补齐 `contract_bucket / contract_type / expiry_ts / bucket_rank / source_exchange`
+- Streamlit 资产筛选在刷新时会重置，避免历史筛选把 `Top10` 误缩成 `BTC`
+
+### 1.4 固定白名单资产池
 
 当前 `v1` 固定白名单按“市值前列、排除稳定币与包装资产、且 Gate 上存在现货与至少一种合约腿”落地为：
 

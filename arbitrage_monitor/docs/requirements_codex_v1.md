@@ -139,6 +139,7 @@
 - 可转债：主数据源、结构化降级源、最后兜底源
 - 舆情/热度：主数据源，必要时允许备选源
 - 金属：国内期货主备源、外盘商品主源、汇率四级兜底源
+- 期现溢价：`A50` 多合约 + `Top10` 合约加密资产池，支持现货、永续、月度、季度合约桶
 
 具体接口名称、限流结论和 fallback 顺序，统一以 `docs/api_registry.md` 为准。
 
@@ -207,6 +208,23 @@
 - 表示该条数据或信号生成时的本地时间
 - 数据库存储使用 ISO 格式字符串
 - 查询“今日数据”时必须按本地时区口径统计
+
+#### `PremiumArbitrageData`
+
+当前版本的期现溢价数据模型必须支持以下字段语义：
+
+- `asset_group`: 资产组，如 `A50`、`BTC`、`ETH`
+- `contract_bucket`: 合约桶，当前固定为 `PERP`、`MONTHLY_CURRENT`、`MONTHLY_NEXT`、`QUARTERLY_CURRENT`、`QUARTERLY_NEXT`
+- `contract_type`: 原生合约类型，如 `spot`、`swap`、`future`
+- `expiry_ts`: 到期时间；永续允许为空
+- `bucket_rank`: 看板与快照读取排序字段
+- `source_exchange`: 当前期货腿对应的交易所标识
+
+约束：
+
+- `A50` 允许继续保留“多合约”旧展示口径
+- 加密资产必须按 `asset_group × contract_bucket` 组织阈值与看板展示
+- 永续不参与年化折溢价计算，月度/季度合约允许参与年化阈值
 
 ### 7.3 当前版本不强制的字段
 

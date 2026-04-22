@@ -197,7 +197,7 @@
 - `latency`: 中等
 - `quality`: 中高
 - `fallback`: 某个资产仅缺失部分交割合约桶时允许局部跳过；整表失败则只保留现货与永续
-- `notes`: 当前按 `expire_time + cycle` 归类为 `MONTHLY_CURRENT`、`MONTHLY_NEXT`、`QUARTERLY_CURRENT`、`QUARTERLY_NEXT`
+- `notes`: 当前按 `expire_time + cycle` 归类为 `MONTHLY_CURRENT`、`MONTHLY_NEXT`、`QUARTERLY_CURRENT`、`QUARTERLY_NEXT`；当前固定白名单里 `BTC/ETH/DOGE` 已验证可落到双月度 + 双季度桶，`XRP/SOL/ADA/LINK/AVAX` 至少可落到双月度桶
 
 ### 1.17 A50 现货主数据源
 
@@ -222,6 +222,18 @@
 - `quality`: 中高
 - `fallback`: 单个 A50 合约缺失时跳过该合约；整表失败则跳过 A50 本轮
 - `notes`: 通过筛选 `名称` 含 `A50` 的全部合约构造 A50 多合约溢价对
+
+### 1.19 加密资产稳定币收益率研究台账
+
+- `status`: `RESEARCH_ONLY`
+- `module`: `docs/crypto_cash_and_carry_research_20260418.md`
+- `name`: `exchange earn/savings flexible rate endpoints`
+- `call`: `官方 REST 文档与最小直连验证`
+- `rate_limit`: 依交易所而定
+- `latency`: 不适用
+- `quality`: 研究中
+- `fallback`: 暂不接入生产代码
+- `notes`: 当前仅形成研究台账，公开候选优先 `Bybit`，`Binance/KuCoin` 明确需要鉴权，`OKX/Gate` 公开性仍待确认
 
 ---
 
