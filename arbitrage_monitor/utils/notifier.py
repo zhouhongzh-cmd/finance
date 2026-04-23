@@ -1,5 +1,6 @@
 import queue
 import threading
+from typing import Optional
 
 import httpx
 
@@ -8,8 +9,10 @@ from config.settings import settings
 from utils.db_manager import DBManager
 from utils.logger import logger
 
+
 class Notifier:
     """提供单例式异步内存发送队列，避免 Webhook 卡死所有策略主线程"""
+
     def __init__(self):
         self.q = queue.Queue()
         self.client = httpx.Client(timeout=settings.REQUEST_TIMEOUT)
@@ -154,4 +157,28 @@ class Notifier:
         response.raise_for_status()
         return response
 
-notifier = Notifier()
+
+_notifier_instance: Optional[Notifier] = None
+_notifier_lock = threading.Lock()
+
+
+def get_notifier() -> Notifier:
+    global _notifier_instance
+    if _notifier_instance is None:
+        with _notifier_lock:
+            if _notifier_instance is None:
+                _notifier_instance = Notifier()
+    return _notifier_instance
+
+
+class LazyNotifierProxy:
+    """延迟初始化通知器，避免模块导入时启动线程和 HTTP 客户端。"""
+
+    def __getattr__(self, name):
+        return getattr(get_notifier(), name)
+
+    def __setattr__(self, name, value):
+        setattr(get_notifier(), name, value)
+
+
+notifier = LazyNotifierProxy()

@@ -10,4 +10,3 @@ pandas>=2.0.0
 yfinance>=0.2.0
 forex-python>=1.9.0
 ccxt>=4.0.0
-ib_insync>=0.9.8

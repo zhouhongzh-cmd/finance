@@ -13,7 +13,7 @@ from models.market_data import (
     SentimentData,
 )
 from models.signals import Signal
-from utils.premium_config import CONTRACT_BUCKET_LABELS, CRYPTO_PREMIUM_ASSETS
+from config.premium_thresholds import CONTRACT_BUCKET_LABELS, CRYPTO_PREMIUM_ASSETS
 
 
 FUTURES_PRODUCT_ORDER = {"IH": 0, "IF": 1, "IC": 2, "IM": 3}

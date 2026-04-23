@@ -40,6 +40,7 @@
 - `config/futures_thresholds.json`
 - `config/metals_thresholds.json`
 - `config/premium_thresholds.json`
+- `config/premium_thresholds.py`
 - `models/market_data.py`
 - `models/signals.py`
 - `strategies/base.py`
@@ -64,10 +65,14 @@
 #### 核心文件
 - `core_scheduler.py`
 - `app_dashboard.py`
+- `dashboard/tables.py`
 - `utils/db_manager.py`
 - `utils/logger.py`
 - `utils/notifier.py`
-- `tests/test_integration.py`
+- `tests/test_scheduler.py`
+- `tests/test_snapshot_storage.py`
+- `tests/test_premium.py`
+- `tests/test_notification.py`
 
 ---
 
@@ -76,6 +81,8 @@
 补充说明：
 
 - 若涉及多台电脑同步、GitHub 远程、SSH key 或跨设备工作流，参考 `docs/multi_device_sync_guide.md`
+- 若涉及“新增一个品种 / 新增一个独立模块”，优先参考 `docs/new_module_integration_guide.md`
+- 若涉及当前结构治理与横向重构，优先参考 `docs/refactor_plan_20260423.md`
 
 ### 变更先分类
 

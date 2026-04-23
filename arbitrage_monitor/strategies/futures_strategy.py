@@ -3,7 +3,7 @@ from models.signals import Signal
 from models.market_data import FuturesData
 from strategies.base import BaseStrategy
 from utils.logger import logger
-from utils.futures_config import get_effective_futures_threshold
+from config.futures_thresholds import get_effective_futures_threshold
 
 
 class FuturesDiscountStrategy(BaseStrategy):

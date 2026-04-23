@@ -3,12 +3,13 @@
 L2: 调度与并发层 + L6: 运维与监控层
 """
 
+import os
 import signal
 import sys
 import threading
 import time as time_module
-from datetime import datetime, time
-from typing import Dict, Optional
+from datetime import datetime
+from typing import Callable, Dict, Optional
 
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -20,6 +21,7 @@ from fetchers.ak_metals import metals_fetcher
 from fetchers.futures_margin import futures_margin_fetcher
 from fetchers.premium_fetcher import premium_fetcher
 from fetchers.sentiment_spider import sentiment_fetcher
+from models.signals import Signal
 from strategies.cb_strategy import ConvertibleStrategy
 from strategies.futures_strategy import FuturesDiscountStrategy
 from strategies.metals_strategy import MetalsArbitrageStrategy
@@ -28,6 +30,7 @@ from strategies.sentiment_strategy import SentimentStrategy
 from utils.db_manager import DBManager
 from utils.logger import configure_logger, logger
 from utils.notifier import notifier
+from utils.trading_session import is_day_session_active, is_night_session_active
 
 
 configure_logger()
@@ -119,6 +122,108 @@ _scheduler_runtime_state = {
     for name, cfg in MODULE_RUNTIME_CONFIG.items()
 }
 
+MODULE_TASK_CONFIG = {
+    "futures_cruise": {
+        "job_name": "futures_cruise_mode",
+        "prefix": "FUTURES",
+        "strategy_name": "Futures_Discount_Arbitrage",
+        "mode": "cruise",
+        "session_required": False,
+        "watch_preferred": True,
+        "watch_skip_log": "futures_cruise_skipped_watch_preferred",
+        "fetcher": futures_fetcher,
+        "strategy_factory": FuturesDiscountStrategy,
+    },
+    "convertible_cruise": {
+        "job_name": "convertible_cruise_mode",
+        "prefix": "CONVERTIBLE",
+        "strategy_name": "Convertible_Arbitrage",
+        "mode": "cruise",
+        "session_required": False,
+        "watch_preferred": True,
+        "watch_skip_log": "convertible_cruise_skipped_watch_preferred",
+        "fetcher": convertible_fetcher,
+        "strategy_factory": ConvertibleStrategy,
+    },
+    "sentiment_cruise": {
+        "job_name": "sentiment_low_freq_mode",
+        "prefix": "SENTIMENT",
+        "strategy_name": "Sentiment_Heat_and_Risk",
+        "mode": "cruise",
+        "session_required": True,
+        "watch_preferred": False,
+        "session_skip_log": "sentiment_low_freq_skipped_outside_window",
+        "fetcher": sentiment_fetcher,
+        "strategy_factory": SentimentStrategy,
+    },
+    "metals_cruise": {
+        "job_name": "metals_cruise_mode",
+        "prefix": "METALS",
+        "strategy_name": "Metals_Arbitrage",
+        "mode": "cruise",
+        "session_required": False,
+        "watch_preferred": True,
+        "watch_skip_log": "metals_cruise_skipped_watch_preferred",
+        "fetcher": metals_fetcher,
+        "strategy_factory": MetalsArbitrageStrategy,
+    },
+    "futures_watch": {
+        "job_name": "futures_watch_mode",
+        "prefix": "FUTURES",
+        "strategy_name": "Futures_Discount_Arbitrage",
+        "mode": "watch",
+        "session_required": True,
+        "watch_preferred": False,
+        "session_skip_log": "futures_watch_skipped_non_trading_hours",
+        "fetcher": futures_fetcher,
+        "strategy_factory": FuturesDiscountStrategy,
+    },
+    "convertible_watch": {
+        "job_name": "convertible_watch_mode",
+        "prefix": "CONVERTIBLE",
+        "strategy_name": "Convertible_Arbitrage",
+        "mode": "watch",
+        "session_required": True,
+        "watch_preferred": False,
+        "session_skip_log": "convertible_watch_skipped_non_trading_hours",
+        "fetcher": convertible_fetcher,
+        "strategy_factory": ConvertibleStrategy,
+    },
+    "metals_watch": {
+        "job_name": "metals_watch_mode",
+        "prefix": "METALS",
+        "strategy_name": "Metals_Arbitrage",
+        "mode": "watch",
+        "session_required": True,
+        "watch_preferred": False,
+        "session_skip_log": "metals_watch_skipped_non_trading_hours",
+        "fetcher": metals_fetcher,
+        "strategy_factory": MetalsArbitrageStrategy,
+    },
+    "premium_cruise": {
+        "job_name": "premium_cruise_mode",
+        "prefix": "PREMIUM",
+        "strategy_name": "Premium_Arbitrage",
+        "mode": "cruise",
+        "session_required": False,
+        "watch_preferred": True,
+        "watch_skip_log": "premium_cruise_skipped_watch_preferred",
+        "fetcher": premium_fetcher,
+        "strategy_factory": PremiumArbitrageStrategy,
+    },
+    "premium_watch": {
+        "job_name": "premium_watch_mode",
+        "prefix": "PREMIUM",
+        "strategy_name": "Premium_Arbitrage",
+        "mode": "watch",
+        "session_required": True,
+        "watch_preferred": False,
+        "session_skip_log": "premium_watch_skipped_non_trading_hours",
+        "fetcher": premium_fetcher,
+        "strategy_factory": PremiumArbitrageStrategy,
+    },
+}
+
 
 def restore_cooldown_from_db():
     """启动时从数据库恢复冷却期状态，防止重启后报警轰炸。"""
@@ -133,57 +238,23 @@ def restore_cooldown_from_db():
         logger.warning("cooldown_restore_failed", error=str(exc))
 
 
-def _parse_optional_time(value: str) -> Optional[time]:
-    value = (value or "").strip()
-    if not value:
-        return None
-    return time.fromisoformat(value)
-
-
-def _is_day_session_active(start_value: str, end_value: str, now: datetime) -> bool:
-    start = _parse_optional_time(start_value)
-    end = _parse_optional_time(end_value)
-    if not start or not end:
-        return False
-    return now.weekday() < 5 and start <= now.time() <= end
-
-
-def _is_night_session_active(start_value: str, end_value: str, now: datetime) -> bool:
-    start = _parse_optional_time(start_value)
-    end = _parse_optional_time(end_value)
-    if not start or not end:
-        return False
-
-    current_time = now.time()
-    if start <= end:
-        return now.weekday() < 5 and start <= current_time <= end
-
-    if current_time >= start:
-        return now.weekday() < 5
-    if current_time <= end:
-        return now.weekday() > 0
-    return False
-
-
 def is_module_watch_hours(prefix: str, now: Optional[datetime] = None) -> bool:
     now = now or datetime.now()
-    return any(
-        (
-            _is_day_session_active(
-                getattr(settings, f"{prefix}_MORNING_START"),
-                getattr(settings, f"{prefix}_MORNING_END"),
-                now,
-            ),
-            _is_day_session_active(
-                getattr(settings, f"{prefix}_AFTERNOON_START"),
-                getattr(settings, f"{prefix}_AFTERNOON_END"),
-                now,
-            ),
-            _is_night_session_active(
-                getattr(settings, f"{prefix}_NIGHT_START"),
-                getattr(settings, f"{prefix}_NIGHT_END"),
-                now,
-            ),
+    return (
+        is_day_session_active(
+            getattr(settings, f"{prefix}_MORNING_START"),
+            getattr(settings, f"{prefix}_MORNING_END"),
+            now,
+        )
+        or is_day_session_active(
+            getattr(settings, f"{prefix}_AFTERNOON_START"),
+            getattr(settings, f"{prefix}_AFTERNOON_END"),
+            now,
+        )
+        or is_night_session_active(
+            getattr(settings, f"{prefix}_NIGHT_START"),
+            getattr(settings, f"{prefix}_NIGHT_END"),
+            now,
         )
     )
 
@@ -245,6 +316,40 @@ def persist_runtime_data(strategy_name: str, data) -> None:
             strategy=strategy_name,
             error=str(exc),
         )
+
+
+def _log_strategy_disabled(strategy_name: str) -> dict[str, str]:
+    logger.info("strategy_disabled", strategy=strategy_name)
+    return {"status": "DISABLED"}
+
+
+def run_module_task(task_key: str):
+    config = MODULE_TASK_CONFIG[task_key]
+    prefix = config["prefix"]
+    mode = str(config["mode"])
+    strategy_name = str(config["strategy_name"])
+    fetcher = config["fetcher"]
+    strategy_factory: Callable[[], object] = config["strategy_factory"]
+
+    def _runner():
+        sync_runtime_settings()
+        if not getattr(settings, f"ENABLE_{prefix}_MONITOR"):
+            return _log_strategy_disabled(strategy_name)
+        if mode == "cruise" and not getattr(settings, f"ENABLE_{prefix}_CRUISE"):
+            return {"status": "DISABLED_MODE"}
+        if mode == "watch" and not getattr(settings, f"ENABLE_{prefix}_WATCH"):
+            return {"status": "DISABLED_MODE"}
+        if config["session_required"] and not is_module_watch_hours(prefix):
+            logger.debug(config.get("session_skip_log", f"{prefix.lower()}_{mode}_skipped_non_trading_hours"))
+            return {"status": "SKIPPED_WINDOW"}
+        if config["watch_preferred"] and is_module_watch_hours(prefix) and getattr(
+            settings, f"ENABLE_{prefix}_WATCH", False
+        ):
+            logger.debug(config.get("watch_skip_log", f"{prefix.lower()}_{mode}_skipped_watch_preferred"))
+            return {"status": "SKIPPED_WINDOW"}
+        return run_strategy_task(fetcher, strategy_factory(), strategy_name)
+
+    return execute_job(str(config["job_name"]), _runner)
 
 
 def run_strategy_task(fetcher, strategy, strategy_name: str):
@@ -449,179 +554,39 @@ def ensure_futures_margin_baseline():
 
 
 def run_futures_cruise_mode():
-    def _runner():
-        sync_runtime_settings()
-        if not settings.ENABLE_FUTURES_MONITOR:
-            logger.info("strategy_disabled", strategy="Futures_Discount_Arbitrage")
-            return {"status": "DISABLED"}
-        if not settings.ENABLE_FUTURES_CRUISE:
-            return {"status": "DISABLED_MODE"}
-        if is_module_watch_hours("FUTURES") and settings.ENABLE_FUTURES_WATCH:
-            logger.debug("futures_cruise_skipped_watch_preferred")
-            return {"status": "SKIPPED_WINDOW"}
-        if settings.ENABLE_FUTURES_MONITOR:
-            return run_strategy_task(
-                futures_fetcher, FuturesDiscountStrategy(), "Futures_Discount_Arbitrage"
-            )
-        return {"status": "DISABLED"}
-
-    return execute_job("futures_cruise_mode", _runner)
+    return run_module_task("futures_cruise")
 
 
 def run_convertible_cruise_mode():
-    def _runner():
-        sync_runtime_settings()
-        if not settings.ENABLE_CONVERTIBLE_MONITOR:
-            logger.info("strategy_disabled", strategy="Convertible_Arbitrage")
-            return {"status": "DISABLED"}
-        if not settings.ENABLE_CONVERTIBLE_CRUISE:
-            return {"status": "DISABLED_MODE"}
-        if is_module_watch_hours("CONVERTIBLE") and settings.ENABLE_CONVERTIBLE_WATCH:
-            logger.debug("convertible_cruise_skipped_watch_preferred")
-            return {"status": "SKIPPED_WINDOW"}
-        if settings.ENABLE_CONVERTIBLE_MONITOR:
-            return run_strategy_task(
-                convertible_fetcher, ConvertibleStrategy(), "Convertible_Arbitrage"
-            )
-        return {"status": "DISABLED"}
-
-    return execute_job("convertible_cruise_mode", _runner)
+    return run_module_task("convertible_cruise")
 
 
 def run_sentiment_low_freq_mode():
-    def _runner():
-        sync_runtime_settings()
-        if not is_module_watch_hours("SENTIMENT"):
-            logger.debug("sentiment_low_freq_skipped_outside_window")
-            return {"status": "SKIPPED_WINDOW"}
-        if not settings.ENABLE_SENTIMENT_MONITOR:
-            logger.info("strategy_disabled", strategy="Sentiment_Heat_and_Risk")
-            return {"status": "DISABLED"}
-        if not settings.ENABLE_SENTIMENT_CRUISE:
-            return {"status": "DISABLED_MODE"}
-        if settings.ENABLE_SENTIMENT_MONITOR:
-            return run_strategy_task(
-                sentiment_fetcher, SentimentStrategy(), "Sentiment_Heat_and_Risk"
-            )
-        return {"status": "DISABLED"}
-
-    return execute_job("sentiment_low_freq_mode", _runner)
+    return run_module_task("sentiment_cruise")
 
 
 def run_metals_cruise_mode():
-    def _runner():
-        sync_runtime_settings()
-        if not settings.ENABLE_METALS_MONITOR:
-            logger.info("strategy_disabled", strategy="Metals_Arbitrage")
-            return {"status": "DISABLED"}
-        if not settings.ENABLE_METALS_CRUISE:
-            return {"status": "DISABLED_MODE"}
-        if is_module_watch_hours("METALS") and settings.ENABLE_METALS_WATCH:
-            logger.debug("metals_cruise_skipped_watch_preferred")
-            return {"status": "SKIPPED_WINDOW"}
-        if settings.ENABLE_METALS_MONITOR:
-            return run_strategy_task(
-                metals_fetcher, MetalsArbitrageStrategy(), "Metals_Arbitrage"
-            )
-        return {"status": "DISABLED"}
-
-    return execute_job("metals_cruise_mode", _runner)
+    return run_module_task("metals_cruise")
 
 
 def run_futures_watch_mode():
-    def _runner():
-        sync_runtime_settings()
-        if not is_module_watch_hours("FUTURES"):
-            logger.debug("futures_watch_skipped_non_trading_hours")
-            return {"status": "SKIPPED_WINDOW"}
-        if not settings.ENABLE_FUTURES_MONITOR:
-            logger.info("strategy_disabled", strategy="Futures_Discount_Arbitrage")
-            return {"status": "DISABLED"}
-        if not settings.ENABLE_FUTURES_WATCH:
-            return {"status": "DISABLED_MODE"}
-        if settings.ENABLE_FUTURES_MONITOR:
-            return run_strategy_task(
-                futures_fetcher, FuturesDiscountStrategy(), "Futures_Discount_Arbitrage"
-            )
-        return {"status": "DISABLED"}
-
-    return execute_job("futures_watch_mode", _runner)
+    return run_module_task("futures_watch")
 
 
 def run_convertible_watch_mode():
-    def _runner():
-        sync_runtime_settings()
-        if not is_module_watch_hours("CONVERTIBLE"):
-            logger.debug("convertible_watch_skipped_non_trading_hours")
-            return {"status": "SKIPPED_WINDOW"}
-        if not settings.ENABLE_CONVERTIBLE_MONITOR:
-            logger.info("strategy_disabled", strategy="Convertible_Arbitrage")
-            return {"status": "DISABLED"}
-        if not settings.ENABLE_CONVERTIBLE_WATCH:
-            return {"status": "DISABLED_MODE"}
-        if settings.ENABLE_CONVERTIBLE_MONITOR:
-            return run_strategy_task(
-                convertible_fetcher, ConvertibleStrategy(), "Convertible_Arbitrage"
-            )
-        return {"status": "DISABLED"}
-
-    return execute_job("convertible_watch_mode", _runner)
+    return run_module_task("convertible_watch")
 
 
 def run_metals_watch_mode():
-    def _runner():
-        sync_runtime_settings()
-        if not is_module_watch_hours("METALS"):
-            logger.debug("metals_watch_skipped_non_trading_hours")
-            return {"status": "SKIPPED_WINDOW"}
-        if not settings.ENABLE_METALS_MONITOR:
-            logger.info("strategy_disabled", strategy="Metals_Arbitrage")
-            return {"status": "DISABLED"}
-        if not settings.ENABLE_METALS_WATCH:
-            return {"status": "DISABLED_MODE"}
-        if settings.ENABLE_METALS_MONITOR:
-            return run_strategy_task(
-                metals_fetcher, MetalsArbitrageStrategy(), "Metals_Arbitrage"
-            )
-        return {"status": "DISABLED"}
-
-    return execute_job("metals_watch_mode", _runner)
+    return run_module_task("metals_watch")
 
 
 def run_premium_cruise_mode():
-    def _runner():
-        sync_runtime_settings()
-        if not settings.ENABLE_PREMIUM_MONITOR:
-            logger.info("strategy_disabled", strategy="Premium_Arbitrage")
-            return {"status": "DISABLED"}
-        if not settings.ENABLE_PREMIUM_CRUISE:
-            return {"status": "DISABLED_MODE"}
-        if is_module_watch_hours("PREMIUM") and settings.ENABLE_PREMIUM_WATCH:
-            logger.debug("premium_cruise_skipped_watch_preferred")
-            return {"status": "SKIPPED_WINDOW"}
-        return run_strategy_task(
-            premium_fetcher, PremiumArbitrageStrategy(), "Premium_Arbitrage"
-        )
-
-    return execute_job("premium_cruise_mode", _runner)
+    return run_module_task("premium_cruise")
 
 
 def run_premium_watch_mode():
-    def _runner():
-        sync_runtime_settings()
-        if not is_module_watch_hours("PREMIUM"):
-            logger.debug("premium_watch_skipped_non_trading_hours")
-            return {"status": "SKIPPED_WINDOW"}
-        if not settings.ENABLE_PREMIUM_MONITOR:
-            logger.info("strategy_disabled", strategy="Premium_Arbitrage")
-            return {"status": "DISABLED"}
-        if not settings.ENABLE_PREMIUM_WATCH:
-            return {"status": "DISABLED_MODE"}
-        return run_strategy_task(
-            premium_fetcher, PremiumArbitrageStrategy(), "Premium_Arbitrage"
-        )
-
-    return execute_job("premium_watch_mode", _runner)
+    return run_module_task("premium_watch")
 
 
 def send_heartbeat():
@@ -635,8 +600,6 @@ def send_heartbeat():
             cursor = conn.execute("SELECT COUNT(*) FROM alert_history")
             total_alerts = cursor.fetchone()[0]
 
-        import os
-
         db_size = os.path.getsize(db_manager.db_path) if os.path.exists(db_manager.db_path) else 0
         heartbeat_msg = (
             f"🟢 套利监控引擎运行正常\n"
@@ -645,8 +608,6 @@ def send_heartbeat():
             f"💾 数据库大小：{db_size / 1024:.1f} KB\n"
             f"⏰ 报告时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
-
-        from models.signals import Signal
 
         notifier.send(
             Signal(

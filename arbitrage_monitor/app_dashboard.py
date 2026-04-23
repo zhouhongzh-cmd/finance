@@ -29,7 +29,7 @@ from strategies.futures_strategy import FuturesDiscountStrategy
 from strategies.metals_strategy import MetalsArbitrageStrategy
 from strategies.premium_strategy import PremiumArbitrageStrategy
 from strategies.sentiment_strategy import SentimentStrategy
-from utils.dashboard_tables import (
+from dashboard.tables import (
     build_convertible_live_tables,
     build_futures_live_tables,
     build_metals_live_tables,
@@ -476,6 +476,8 @@ def load_snapshot_view(
     signal_key = f"{state_key}_signals"
     fetched_key = f"{state_key}_fetched_at"
     source_key = f"{state_key}_source"
+    action_key = f"{state_key}_last_action"
+    action_at_key = f"{state_key}_last_action_at"
 
     needs_fetch = (
         refresh
@@ -490,7 +492,9 @@ def load_snapshot_view(
         st.session_state[data_key] = data_df
         st.session_state[signal_key] = signal_df
         st.session_state[fetched_key] = fetched_at
-        st.session_state[source_key] = "快照"
+        st.session_state[source_key] = "刷新显示" if refresh else "快照"
+        st.session_state[action_key] = "刷新显示" if refresh else "初始化加载"
+        st.session_state[action_at_key] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     return (
         st.session_state[data_key],
@@ -510,6 +514,8 @@ def force_refresh_live_view(
     fetched_key = f"{state_key}_fetched_at"
     source_key = f"{state_key}_source"
     error_key = f"{state_key}_error"
+    action_key = f"{state_key}_last_action"
+    action_at_key = f"{state_key}_last_action_at"
 
     try:
         live_func.clear()
@@ -520,6 +526,8 @@ def force_refresh_live_view(
         st.session_state[signal_key] = signal_df
         st.session_state[fetched_key] = fetched_at
         st.session_state[source_key] = "强制抓新"
+        st.session_state[action_key] = "强制抓新"
+        st.session_state[action_at_key] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         st.session_state[error_key] = ""
     except Exception as exc:
         st.session_state[error_key] = str(exc)
@@ -544,8 +552,10 @@ def get_snapshot_health(module_name: str, fetched_at: str) -> str:
 
 def render_snapshot_meta(module_name: str, fetched_at: str, source: str, state_key: str) -> None:
     status = get_snapshot_health(module_name, fetched_at)
+    last_action = st.session_state.get(f"{state_key}_last_action", "初始化加载")
+    last_action_at = st.session_state.get(f"{state_key}_last_action_at", "")
     st.caption(
-        f"最新快照时间：{fetched_at or '暂无'} | 数据来源：{source} | 数据状态：{status}"
+        f"最新快照时间：{fetched_at or '暂无'} | 数据来源：{source} | 数据状态：{status} | 最近操作：{last_action} {last_action_at}".strip()
     )
     error_text = st.session_state.get(f"{state_key}_error", "")
     if error_text:

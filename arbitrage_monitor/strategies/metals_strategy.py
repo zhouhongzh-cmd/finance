@@ -5,7 +5,7 @@ from typing import List
 from models.market_data import MetalArbitrageData
 from models.signals import Signal
 from strategies.base import BaseStrategy
-from utils.metals_config import get_effective_metal_threshold
+from config.metals_thresholds import get_effective_metal_threshold
 
 
 class MetalsArbitrageStrategy(BaseStrategy):

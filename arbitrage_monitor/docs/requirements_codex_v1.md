@@ -1,6 +1,6 @@
 # 个人金融套利监控系统 — 需求文档（Codex 重构版）
 
-> 版本: V1.1
+> 版本: V1.2
 > 创建日期: 2026-03-15
 > 最后更新: 2026-04-23
 > 适用范围: `arbitrage_monitor` 当前仓库实现与后续迭代
@@ -12,6 +12,7 @@
 
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
+| V1.2 | 2026-04-23 | 1. 补充当前已落地的数据表与运行状态表<br>2. 明确 `alert_history` 以数据库只保留同一 `asset` 最新一条为当前实现口径<br>3. 补充 `premium_thresholds.json` 与 `XUEQIU_COOKIE` 配置说明 |
 | V1.0 | 2026-03-15 | 初始版本 |
 | V1.1 | 2026-04-23 | 1. 补充期现溢价模块调度频率和交易时段<br>2. 补全必要表列表（新增 premium_snapshot）<br>3. 明确 alert_history 保留规则的优先级<br>4. 更新集成测试基准为 36 通过 |
 
@@ -594,8 +595,13 @@
 - `cooldown_state`
 - `futures_margin_snapshot`
 - `futures_live_snapshot`（期指实时快照）
+- `convertible_live_snapshot`（可转债实时快照）
+- `sentiment_live_snapshot`（舆情实时快照）
 - `metal_arbitrage_snapshot`（金属套利快照）
 - `premium_snapshot`（期现溢价快照）
+- `source_health_status`（数据源健康状态）
+- `job_run_status`（调度任务运行状态）
+- `config_change_history`（运行配置变更记录）
 
 ### 11.3 冷却期
 
@@ -604,13 +610,13 @@
 - 同一 `strategy_name + asset` 默认 `30` 分钟不重复推送
 - 冷却期以内存字典作为运行时缓存
 - 重启后必须从数据库恢复
-- `alert_history` 只保留同一 `asset` 的最新一条记录，不再按策略拆分保留
+- `alert_history` 在数据库层只保留同一 `asset` 的最新一条记录，不再按策略拆分保留
 
 **关于 alert_history 保留规则的说明**：
-- “只保留同一 asset 的最新一条”是指在**内存和实时查询**层面的去重策略
-- “默认保留最近 14 天”是指**数据库持久化**层面的清理策略
-- 两者不冲突：内存中只保留最新一条用于展示和冷却判断，但数据库中保留 14 天的历史用于审计和统计
-- 实际实现：通过每日清理任务 (00:10 执行) 删除 14 天前的历史记录
+- 当前实现和自动化测试的口径一致：数据库写入前会先删除该 `asset` 的旧记录，再写入最新一条
+- 因此现阶段 `alert_history` 不承担 14 天审计历史表职责，它更接近“最新告警状态表 + 通知回写状态表”
+- 每日 `00:10` 的保留期清理仍会执行，但它只作用于尚未被新告警覆盖的近期待留记录
+- 若未来需要真正保留多条历史用于审计和统计，应新增独立历史表或同步调整测试与实现后再升级基线
 
 说明：
 
@@ -636,7 +642,9 @@
 系统由于运行在低配环境（`1核 1G`）且高频调度（`30秒`盯盘），必须防范数据库无限膨胀引起的 I/O 阻塞：
 
 - 当前版本已实现基于 `DATA_RETENTION_DAYS` 的日度清理，默认保留最近 `14` 天的 `alert_history`、`futures_margin_snapshot`、`futures_live_snapshot` 与 `metal_arbitrage_snapshot`
+- 当前版本同样对 `convertible_live_snapshot`、`sentiment_live_snapshot` 与 `premium_snapshot` 执行保留期清理
 - 调度器应在每日 `00:10` 运行保留期清理 Job，避免与 `00:00` 的保证金刷新直接重叠
+- `source_health_status`、`job_run_status`、`config_change_history` 当前作为状态/审计辅助表保留，不纳入同一批快照清理
 - 后续若新增 `futures_snapshot`、`cb_snapshot`、`source_health_snapshot` 等快照表，也必须纳入同一套保留期治理，而不是无限追加
 - 长期演进仍建议补充数据量阀值告警与更细粒度的清理统计
 - 高频快照表应执行“分钟级去重 + 关键字段无变化跳过 + 保底定时写入”的轻量瘦身策略，避免盯盘模式下全量重复落库
@@ -770,9 +778,11 @@
 ### 15.4 安全性
 
 - Webhook、Cookie 等敏感配置通过 `.env` 管理
+- `JSL_COOKIE` 用于可转债数据鉴权，`XUEQIU_COOKIE` 用于舆情/热度数据鉴权
 - 监控频率、模块开关、策略阈值和金属阈值通过仓库内共享配置文件管理
 - 参数设置页按模块折叠分组展示；同一模块的开关、时钟和阈值必须收口到同一面板
 - 期指分品种阈值使用 `config/futures_thresholds.json` 与 `config/futures_thresholds.local.json`
+- 期现溢价阈值使用 `config/premium_thresholds.json` 与 `config/premium_thresholds.local.json`
 - 敏感文件不得提交到版本库
 
 ---

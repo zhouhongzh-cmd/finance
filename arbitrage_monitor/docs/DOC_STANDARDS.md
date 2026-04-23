@@ -13,6 +13,7 @@
 
 这些文档定义当前版本真实规则：
 
+- `README.md`
 - `requirements_codex_v1.md`
 - `CONTRIBUTING.md`
 - `api_registry.md`
@@ -42,6 +43,9 @@
 ### D. 导航文档
 
 - `READ_ORDER.md`
+- `README.md` 作为项目入口说明，负责把运行入口、配置入口和主基线链接起来
+- `new_module_integration_guide.md` 作为新增品种 / 模块的落地接入清单
+- `refactor_plan_20260423.md` 作为当前结构治理执行基线
 
 ---
 

@@ -14,7 +14,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from models.market_data import PremiumArbitrageData
 from utils.logger import logger
-from utils.premium_config import (
+from config.premium_thresholds import (
     CONTRACT_BUCKET_LABELS,
     CONTRACT_BUCKET_ORDER,
     CRYPTO_PREMIUM_ASSETS,

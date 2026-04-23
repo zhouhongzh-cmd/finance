@@ -2,32 +2,32 @@ import pandas as pd
 import streamlit as st
 
 from config.settings import settings
-from utils.config_audit import (
+from config.audit import (
     flatten_futures_threshold_values,
     flatten_premium_threshold_values,
     flatten_threshold_values,
     record_config_changes,
 )
 from utils.db_manager import DBManager
-from utils.futures_config import (
+from config.futures_thresholds import (
     get_futures_config_rows,
     reset_futures_thresholds,
     save_futures_thresholds,
 )
-from utils.metals_config import (
+from config.metals_thresholds import (
     get_legacy_metals_thresholds_preview,
     get_metals_config_rows,
     migrate_legacy_metals_thresholds,
     reset_metals_thresholds,
     save_metals_thresholds,
 )
-from utils.premium_config import (
+from config.premium_thresholds import (
     CRYPTO_PREMIUM_ASSETS,
     DEFAULT_PREMIUM_THRESHOLDS,
     get_premium_config_rows,
     save_premium_thresholds,
 )
-from utils.runtime_config import apply_runtime_updates, get_gui_config_values, write_env_updates
+from config.runtime import apply_runtime_updates, get_gui_config_values, write_env_updates
 
 
 st.set_page_config(page_title="参数设置", page_icon="⚙️", layout="wide")
@@ -235,6 +235,351 @@ def render_threshold_header(widths: list[float], labels: list[str]) -> None:
         col.markdown(f"**{label}**")
 
 
+def render_module_switches(
+    *,
+    key_prefix: str,
+    enable_label: str,
+    enable_value: bool,
+    cruise_value: bool | None = None,
+    watch_value: bool | None = None,
+) -> tuple[bool, bool | None, bool | None]:
+    st.markdown("**模块开关**")
+    col1, col2, col3 = st.columns(3)
+    enabled = col1.toggle(enable_label, value=enable_value, key=f"{key_prefix}_enabled")
+    cruise = (
+        col2.checkbox("启用巡航", value=cruise_value, key=f"{key_prefix}_cruise")
+        if cruise_value is not None
+        else None
+    )
+    watch = (
+        col3.checkbox("启用盯盘", value=watch_value, key=f"{key_prefix}_watch")
+        if watch_value is not None
+        else None
+    )
+    return enabled, cruise, watch
+
+
+def render_dual_interval_inputs(
+    *,
+    key_prefix: str,
+    cruise_value: int,
+    watch_value: int,
+) -> tuple[int, int]:
+    st.markdown("**运行频率**")
+    col1, col2 = st.columns(2)
+    cruise = col1.number_input(
+        "巡航间隔 (分钟)",
+        min_value=1,
+        max_value=1440,
+        value=int(cruise_value),
+        step=1,
+        key=f"{key_prefix}_cruise_interval",
+    )
+    watch = col2.number_input(
+        "盯盘间隔 (秒)",
+        min_value=5,
+        max_value=3600,
+        value=int(watch_value),
+        step=5,
+        key=f"{key_prefix}_watch_interval",
+    )
+    return int(cruise), int(watch)
+
+
+def render_single_interval_input(
+    *,
+    key_prefix: str,
+    label: str,
+    value: int,
+) -> int:
+    st.markdown("**运行频率**")
+    return int(
+        st.number_input(
+            label,
+            min_value=1,
+            max_value=1440,
+            value=int(value),
+            step=1,
+            key=f"{key_prefix}_interval",
+        )
+    )
+
+
+def render_futures_threshold_rows(
+    rows: list[dict[str, object]],
+) -> dict[str, dict[str, float | bool]]:
+    widths = [0.8, 1.2, 0.8, 1, 0.8, 1.1, 0.8, 1, 0.8, 1.1]
+    render_threshold_header(
+        widths,
+        [
+            "品种",
+            "名称",
+            "升水启用",
+            "升水阈值(%)",
+            "年化升水启用",
+            "年化升水阈值(%)",
+            "贴水启用",
+            "贴水阈值(%)",
+            "年化贴水启用",
+            "年化贴水阈值(%)",
+        ],
+    )
+    updates: dict[str, dict[str, float | bool]] = {}
+    for row in rows:
+        product_code = str(row["product_code"])
+        cols = st.columns(widths)
+        cols[0].markdown(f"`{product_code}`")
+        cols[1].markdown(str(row["name"]))
+        upper_enabled = cols[2].checkbox(
+            f"{product_code}_upper_enabled",
+            value=bool(row["upper_enabled"]),
+            label_visibility="collapsed",
+            key=f"futures_threshold_upper_enabled_{product_code}",
+        )
+        upper_threshold = cols[3].number_input(
+            f"{product_code}_upper_threshold",
+            min_value=0.0,
+            max_value=1000.0,
+            value=float(row["upper"]),
+            step=0.1,
+            label_visibility="collapsed",
+            key=f"futures_threshold_upper_{product_code}",
+        )
+        annualized_upper_enabled = cols[4].checkbox(
+            f"{product_code}_annualized_upper_enabled",
+            value=bool(row.get("annualized_upper_enabled", True)),
+            label_visibility="collapsed",
+            key=f"futures_threshold_annualized_upper_enabled_{product_code}",
+        )
+        annualized_upper_threshold = cols[5].number_input(
+            f"{product_code}_annualized_upper",
+            min_value=0.0,
+            max_value=1000.0,
+            value=float(row["annualized_upper"]),
+            step=0.5,
+            label_visibility="collapsed",
+            key=f"futures_threshold_annualized_upper_{product_code}",
+        )
+        lower_enabled = cols[6].checkbox(
+            f"{product_code}_lower_enabled",
+            value=bool(row["lower_enabled"]),
+            label_visibility="collapsed",
+            key=f"futures_threshold_lower_enabled_{product_code}",
+        )
+        lower_threshold = cols[7].number_input(
+            f"{product_code}_lower_threshold",
+            min_value=-1000.0,
+            max_value=0.0,
+            value=float(row["lower"]),
+            step=0.1,
+            label_visibility="collapsed",
+            key=f"futures_threshold_lower_{product_code}",
+        )
+        annualized_lower_enabled = cols[8].checkbox(
+            f"{product_code}_annualized_lower_enabled",
+            value=bool(row.get("annualized_lower_enabled", True)),
+            label_visibility="collapsed",
+            key=f"futures_threshold_annualized_lower_enabled_{product_code}",
+        )
+        annualized_lower_threshold = cols[9].number_input(
+            f"{product_code}_annualized_lower",
+            min_value=-1000.0,
+            max_value=0.0,
+            value=float(row["annualized_lower"]),
+            step=0.5,
+            label_visibility="collapsed",
+            key=f"futures_threshold_annualized_lower_{product_code}",
+        )
+        updates[product_code] = {
+            "upper_enabled": bool(upper_enabled),
+            "upper": float(upper_threshold),
+            "annualized_upper_enabled": bool(annualized_upper_enabled),
+            "annualized_upper": float(annualized_upper_threshold),
+            "lower_enabled": bool(lower_enabled),
+            "lower": float(lower_threshold),
+            "annualized_lower_enabled": bool(annualized_lower_enabled),
+            "annualized_lower": float(annualized_lower_threshold),
+        }
+    return updates
+
+
+def render_premium_threshold_rows(
+    *,
+    rows: list[dict[str, object]],
+    all_rows: list[dict[str, object]],
+    key_prefix: str,
+    include_asset_columns: bool,
+) -> dict[str, dict[str, float | bool]]:
+    widths = (
+        [0.9, 0.9, 1.1, 0.8, 1, 0.8, 1.1, 0.8, 1, 0.8, 1.1]
+        if include_asset_columns
+        else [0.9, 1.2, 0.8, 1, 0.8, 1.1, 0.8, 1, 0.8, 1.1]
+    )
+    labels = (
+        [
+            "资产",
+            "阈值组",
+            "名称",
+            "升水启用",
+            "升水阈值(%)",
+            "年化升水启用",
+            "年化升水阈值(%)",
+            "贴水启用",
+            "贴水阈值(%)",
+            "年化贴水启用",
+            "年化贴水阈值(%)",
+        ]
+        if include_asset_columns
+        else [
+            "键",
+            "名称",
+            "升水启用",
+            "升水阈值(%)",
+            "年化升水启用",
+            "年化升水阈值(%)",
+            "贴水启用",
+            "贴水阈值(%)",
+            "年化贴水启用",
+            "年化贴水阈值(%)",
+        ]
+    )
+    render_threshold_header(widths, labels)
+    updates = build_premium_threshold_payload(all_rows)
+    for row in rows:
+        threshold_key = str(row["threshold_key"])
+        cols = st.columns(widths)
+        value_offset = 0
+        if include_asset_columns:
+            cols[0].markdown(f"`{row['asset_group']}`")
+            cols[1].markdown(str(row["bucket_label"]))
+            cols[2].markdown(str(row["name"]))
+            value_offset = 3
+        else:
+            cols[0].markdown(f"`{threshold_key}`")
+            cols[1].markdown(str(row["name"]))
+            value_offset = 2
+
+        upper_enabled = cols[value_offset].checkbox(
+            f"{threshold_key}_upper_enabled",
+            value=bool(row.get("upper_enabled", True)),
+            label_visibility="collapsed",
+            key=f"{key_prefix}_upper_enabled_{threshold_key}",
+        )
+        upper_threshold = cols[value_offset + 1].number_input(
+            f"{threshold_key}_upper",
+            min_value=0.0,
+            value=float(row["upper"]),
+            step=0.1,
+            label_visibility="collapsed",
+            key=f"{key_prefix}_upper_{threshold_key}",
+        )
+        annualized_upper_enabled = cols[value_offset + 2].checkbox(
+            f"{threshold_key}_annualized_upper_enabled",
+            value=bool(row.get("annualized_upper_enabled", True)),
+            label_visibility="collapsed",
+            key=f"{key_prefix}_annualized_upper_enabled_{threshold_key}",
+        )
+        annualized_upper_threshold = cols[value_offset + 3].number_input(
+            f"{threshold_key}_annualized_upper",
+            min_value=0.0,
+            value=float(row["annualized_upper"]),
+            step=0.1,
+            label_visibility="collapsed",
+            key=f"{key_prefix}_annualized_upper_{threshold_key}",
+        )
+        lower_enabled = cols[value_offset + 4].checkbox(
+            f"{threshold_key}_lower_enabled",
+            value=bool(row.get("lower_enabled", True)),
+            label_visibility="collapsed",
+            key=f"{key_prefix}_lower_enabled_{threshold_key}",
+        )
+        lower_threshold = cols[value_offset + 5].number_input(
+            f"{threshold_key}_lower",
+            max_value=0.0,
+            value=float(row["lower"]),
+            step=0.1,
+            label_visibility="collapsed",
+            key=f"{key_prefix}_lower_{threshold_key}",
+        )
+        annualized_lower_enabled = cols[value_offset + 6].checkbox(
+            f"{threshold_key}_annualized_lower_enabled",
+            value=bool(row.get("annualized_lower_enabled", True)),
+            label_visibility="collapsed",
+            key=f"{key_prefix}_annualized_lower_enabled_{threshold_key}",
+        )
+        annualized_lower_threshold = cols[value_offset + 7].number_input(
+            f"{threshold_key}_annualized_lower",
+            max_value=0.0,
+            value=float(row["annualized_lower"]),
+            step=0.1,
+            label_visibility="collapsed",
+            key=f"{key_prefix}_annualized_lower_{threshold_key}",
+        )
+        updates[threshold_key] = {
+            "upper_enabled": bool(upper_enabled),
+            "upper": float(upper_threshold),
+            "annualized_upper_enabled": bool(annualized_upper_enabled),
+            "annualized_upper": float(annualized_upper_threshold),
+            "lower_enabled": bool(lower_enabled),
+            "lower": float(lower_threshold),
+            "annualized_lower_enabled": bool(annualized_lower_enabled),
+            "annualized_lower": float(annualized_lower_threshold),
+        }
+    return updates
+
+
+def render_metals_threshold_rows(
+    rows: list[dict[str, object]],
+) -> dict[str, dict[str, float | bool]]:
+    widths = [1, 1.2, 0.8, 1, 0.8, 1]
+    render_threshold_header(
+        widths,
+        ["代码", "名称", "升水启用", "升水阈值(%)", "贴水启用", "贴水阈值(%)"],
+    )
+    updates: dict[str, dict[str, float | bool]] = {}
+    for row in rows:
+        symbol = str(row["symbol"])
+        cols = st.columns(widths)
+        cols[0].markdown(f"`{symbol}`")
+        cols[1].markdown(str(row["name"]))
+        upper_enabled = cols[2].checkbox(
+            f"{symbol}_upper_enabled",
+            value=bool(row.get("upper_enabled", True)),
+            label_visibility="collapsed",
+            key=f"threshold_upper_enabled_{symbol}",
+        )
+        upper = cols[3].number_input(
+            f"{symbol}_upper",
+            min_value=0.0,
+            value=float(row["upper"]),
+            step=0.1,
+            label_visibility="collapsed",
+            key=f"threshold_upper_{symbol}",
+        )
+        lower_enabled = cols[4].checkbox(
+            f"{symbol}_lower_enabled",
+            value=bool(row.get("lower_enabled", True)),
+            label_visibility="collapsed",
+            key=f"threshold_lower_enabled_{symbol}",
+        )
+        lower = cols[5].number_input(
+            f"{symbol}_lower",
+            min_value=-1000.0,
+            max_value=0.0,
+            value=float(row["lower"]),
+            step=0.1,
+            label_visibility="collapsed",
+            key=f"threshold_lower_{symbol}",
+        )
+        updates[symbol] = {
+            "upper": float(upper),
+            "lower": float(lower),
+            "upper_enabled": bool(upper_enabled),
+            "lower_enabled": bool(lower_enabled),
+        }
+    return updates
+
+
 def build_premium_threshold_payload(rows: list[dict[str, object]]) -> dict[str, dict[str, float | bool]]:
     payload: dict[str, dict[str, float | bool]] = {}
     for row in rows:
@@ -279,123 +624,23 @@ with st.expander("股指期货", expanded=True):
     futures_rows = get_futures_config_rows()
     futures_before = flatten_futures_threshold_values(futures_rows)
     with st.form("futures_module_form"):
-        st.markdown("**模块开关**")
-        col1, col2, col3 = st.columns(3)
-        enable_futures = col1.toggle("启用股指期货监控", value=current["ENABLE_FUTURES_MONITOR"])
-        enable_futures_cruise = col2.checkbox("启用巡航", value=current["ENABLE_FUTURES_CRUISE"])
-        enable_futures_watch = col3.checkbox("启用盯盘", value=current["ENABLE_FUTURES_WATCH"])
-
-        st.markdown("**运行频率**")
-        col1, col2 = st.columns(2)
-        futures_cruise = col1.number_input(
-            "巡航间隔 (分钟)",
-            min_value=1,
-            max_value=1440,
-            value=int(current["FUTURES_CRUISE_INTERVAL_MINUTES"]),
-            step=1,
+        enable_futures, enable_futures_cruise, enable_futures_watch = render_module_switches(
+            key_prefix="futures_module",
+            enable_label="启用股指期货监控",
+            enable_value=bool(current["ENABLE_FUTURES_MONITOR"]),
+            cruise_value=bool(current["ENABLE_FUTURES_CRUISE"]),
+            watch_value=bool(current["ENABLE_FUTURES_WATCH"]),
         )
-        futures_watch = col2.number_input(
-            "盯盘间隔 (秒)",
-            min_value=5,
-            max_value=3600,
-            value=int(current["FUTURES_WATCH_INTERVAL_SECONDS"]),
-            step=5,
+        futures_cruise, futures_watch = render_dual_interval_inputs(
+            key_prefix="futures_module",
+            cruise_value=int(current["FUTURES_CRUISE_INTERVAL_MINUTES"]),
+            watch_value=int(current["FUTURES_WATCH_INTERVAL_SECONDS"]),
         )
 
         futures_windows = render_time_window("FUTURES", current)
 
         st.markdown("**分品种阈值**")
-        futures_threshold_widths = [0.8, 1.2, 0.8, 1, 0.8, 1.1, 0.8, 1, 0.8, 1.1]
-        render_threshold_header(
-            futures_threshold_widths,
-            [
-                "品种",
-                "名称",
-                "升水启用",
-                "升水阈值(%)",
-                "年化升水启用",
-                "年化升水阈值(%)",
-                "贴水启用",
-                "贴水阈值(%)",
-                "年化贴水启用",
-                "年化贴水阈值(%)",
-            ],
-        )
-        futures_threshold_updates: dict[str, dict[str, float | bool]] = {}
-        for row in futures_rows:
-            cols = st.columns(futures_threshold_widths)
-            cols[0].markdown(f"`{row['product_code']}`")
-            cols[1].markdown(row["name"])
-            upper_enabled = cols[2].checkbox(
-                f"{row['product_code']}_upper_enabled",
-                value=bool(row["upper_enabled"]),
-                label_visibility="collapsed",
-                key=f"futures_threshold_upper_enabled_{row['product_code']}",
-            )
-            upper_threshold = cols[3].number_input(
-                f"{row['product_code']}_upper_threshold",
-                min_value=0.0,
-                max_value=1000.0,
-                value=float(row["upper"]),
-                step=0.1,
-                label_visibility="collapsed",
-                key=f"futures_threshold_upper_{row['product_code']}",
-            )
-            annualized_upper_enabled = cols[4].checkbox(
-                f"{row['product_code']}_annualized_upper_enabled",
-                value=bool(row.get("annualized_upper_enabled", True)),
-                label_visibility="collapsed",
-                key=f"futures_threshold_annualized_upper_enabled_{row['product_code']}",
-            )
-            annualized_upper_threshold = cols[5].number_input(
-                f"{row['product_code']}_annualized_upper",
-                min_value=0.0,
-                max_value=1000.0,
-                value=float(row["annualized_upper"]),
-                step=0.5,
-                label_visibility="collapsed",
-                key=f"futures_threshold_annualized_upper_{row['product_code']}",
-            )
-            lower_enabled = cols[6].checkbox(
-                f"{row['product_code']}_lower_enabled",
-                value=bool(row["lower_enabled"]),
-                label_visibility="collapsed",
-                key=f"futures_threshold_lower_enabled_{row['product_code']}",
-            )
-            lower_threshold = cols[7].number_input(
-                f"{row['product_code']}_lower_threshold",
-                min_value=-1000.0,
-                max_value=0.0,
-                value=float(row["lower"]),
-                step=0.1,
-                label_visibility="collapsed",
-                key=f"futures_threshold_lower_{row['product_code']}",
-            )
-            annualized_lower_enabled = cols[8].checkbox(
-                f"{row['product_code']}_annualized_lower_enabled",
-                value=bool(row.get("annualized_lower_enabled", True)),
-                label_visibility="collapsed",
-                key=f"futures_threshold_annualized_lower_enabled_{row['product_code']}",
-            )
-            annualized_lower_threshold = cols[9].number_input(
-                f"{row['product_code']}_annualized_lower",
-                min_value=-1000.0,
-                max_value=0.0,
-                value=float(row["annualized_lower"]),
-                step=0.5,
-                label_visibility="collapsed",
-                key=f"futures_threshold_annualized_lower_{row['product_code']}",
-            )
-            futures_threshold_updates[row["product_code"]] = {
-                "upper_enabled": bool(upper_enabled),
-                "upper": float(upper_threshold),
-                "annualized_upper_enabled": bool(annualized_upper_enabled),
-                "annualized_upper": float(annualized_upper_threshold),
-                "lower_enabled": bool(lower_enabled),
-                "lower": float(lower_threshold),
-                "annualized_lower_enabled": bool(annualized_lower_enabled),
-                "annualized_lower": float(annualized_lower_threshold),
-            }
+        futures_threshold_updates = render_futures_threshold_rows(futures_rows)
 
         save_futures = st.form_submit_button("保存股指期货设置", use_container_width=True)
         reset_futures = st.form_submit_button("恢复期指阈值默认值")
@@ -455,122 +700,28 @@ crypto_threshold_prefixes = tuple(
 with st.expander("A50", expanded=False):
     st.caption("A50 区块内直接维护运行时和阈值。运行时仍对应同一套 premium 模块字段，不会拆成第二套任务。")
     with st.form("premium_a50_form"):
-        st.markdown("**模块开关**")
-        col1, col2, col3 = st.columns(3)
-        enable_premium = col1.toggle("启用 A50 监控", value=current["ENABLE_PREMIUM_MONITOR"])
-        enable_premium_cruise = col2.checkbox("启用巡航", value=current["ENABLE_PREMIUM_CRUISE"])
-        enable_premium_watch = col3.checkbox("启用盯盘", value=current["ENABLE_PREMIUM_WATCH"])
-
-        st.markdown("**运行频率**")
-        col1, col2 = st.columns(2)
-        premium_cruise = col1.number_input(
-            "巡航间隔 (分钟)",
-            min_value=1,
-            max_value=1440,
-            value=int(current["PREMIUM_CRUISE_INTERVAL_MINUTES"]),
-            step=1,
-            key="premium_a50_cruise",
+        enable_premium, enable_premium_cruise, enable_premium_watch = render_module_switches(
+            key_prefix="premium_a50",
+            enable_label="启用 A50 监控",
+            enable_value=bool(current["ENABLE_PREMIUM_MONITOR"]),
+            cruise_value=bool(current["ENABLE_PREMIUM_CRUISE"]),
+            watch_value=bool(current["ENABLE_PREMIUM_WATCH"]),
         )
-        premium_watch = col2.number_input(
-            "盯盘间隔 (秒)",
-            min_value=5,
-            max_value=3600,
-            value=int(current["PREMIUM_WATCH_INTERVAL_SECONDS"]),
-            step=5,
-            key="premium_a50_watch",
+        premium_cruise, premium_watch = render_dual_interval_inputs(
+            key_prefix="premium_a50",
+            cruise_value=int(current["PREMIUM_CRUISE_INTERVAL_MINUTES"]),
+            watch_value=int(current["PREMIUM_WATCH_INTERVAL_SECONDS"]),
         )
 
         premium_windows = render_time_window("PREMIUM", current, key_prefix="PREMIUM_A50")
 
         st.markdown("**A50 阈值**")
-        premium_threshold_widths = [0.9, 1.2, 0.8, 1, 0.8, 1.1, 0.8, 1, 0.8, 1.1]
-        render_threshold_header(
-            premium_threshold_widths,
-            [
-                "键",
-                "名称",
-                "升水启用",
-                "升水阈值(%)",
-                "年化升水启用",
-                "年化升水阈值(%)",
-                "贴水启用",
-                "贴水阈值(%)",
-                "年化贴水启用",
-                "年化贴水阈值(%)",
-            ],
+        premium_threshold_updates = render_premium_threshold_rows(
+            rows=a50_rows,
+            all_rows=premium_rows,
+            key_prefix="premium_a50",
+            include_asset_columns=False,
         )
-        premium_threshold_updates = build_premium_threshold_payload(premium_rows)
-        for row in a50_rows:
-            cols = st.columns(premium_threshold_widths)
-            threshold_key = row["threshold_key"]
-            cols[0].markdown(f"`{threshold_key}`")
-            cols[1].markdown(row["name"])
-            upper_enabled = cols[2].checkbox(
-                f"{threshold_key}_upper_enabled",
-                value=bool(row.get("upper_enabled", True)),
-                label_visibility="collapsed",
-                key=f"premium_a50_upper_enabled_{threshold_key}",
-            )
-            upper_threshold = cols[3].number_input(
-                f"{threshold_key}_upper",
-                min_value=0.0,
-                value=float(row["upper"]),
-                step=0.1,
-                label_visibility="collapsed",
-                key=f"premium_a50_upper_{threshold_key}",
-            )
-            annualized_upper_enabled = cols[4].checkbox(
-                f"{threshold_key}_annualized_upper_enabled",
-                value=bool(row.get("annualized_upper_enabled", True)),
-                label_visibility="collapsed",
-                key=f"premium_a50_annualized_upper_enabled_{threshold_key}",
-            )
-            annualized_upper_threshold = cols[5].number_input(
-                f"{threshold_key}_annualized_upper",
-                min_value=0.0,
-                value=float(row["annualized_upper"]),
-                step=0.1,
-                label_visibility="collapsed",
-                key=f"premium_a50_annualized_upper_{threshold_key}",
-            )
-            lower_enabled = cols[6].checkbox(
-                f"{threshold_key}_lower_enabled",
-                value=bool(row.get("lower_enabled", True)),
-                label_visibility="collapsed",
-                key=f"premium_a50_lower_enabled_{threshold_key}",
-            )
-            lower_threshold = cols[7].number_input(
-                f"{threshold_key}_lower",
-                max_value=0.0,
-                value=float(row["lower"]),
-                step=0.1,
-                label_visibility="collapsed",
-                key=f"premium_a50_lower_{threshold_key}",
-            )
-            annualized_lower_enabled = cols[8].checkbox(
-                f"{threshold_key}_annualized_lower_enabled",
-                value=bool(row.get("annualized_lower_enabled", True)),
-                label_visibility="collapsed",
-                key=f"premium_a50_annualized_lower_enabled_{threshold_key}",
-            )
-            annualized_lower_threshold = cols[9].number_input(
-                f"{threshold_key}_annualized_lower",
-                max_value=0.0,
-                value=float(row["annualized_lower"]),
-                step=0.1,
-                label_visibility="collapsed",
-                key=f"premium_a50_annualized_lower_{threshold_key}",
-            )
-            premium_threshold_updates[threshold_key] = {
-                "upper_enabled": bool(upper_enabled),
-                "upper": float(upper_threshold),
-                "annualized_upper_enabled": bool(annualized_upper_enabled),
-                "annualized_upper": float(annualized_upper_threshold),
-                "lower_enabled": bool(lower_enabled),
-                "lower": float(lower_threshold),
-                "annualized_lower_enabled": bool(annualized_lower_enabled),
-                "annualized_lower": float(annualized_lower_threshold),
-            }
 
         save_premium_a50 = st.form_submit_button("保存 A50 设置", use_container_width=True)
 
@@ -622,124 +773,28 @@ with st.expander("A50", expanded=False):
 with st.expander("加密货币", expanded=False):
     st.caption("加密货币区块内直接维护运行时和阈值。每个币种只保留两组阈值：永续单独一组，其他交割合约共用一组。")
     with st.form("premium_crypto_form"):
-        st.markdown("**模块开关**")
-        col1, col2, col3 = st.columns(3)
-        enable_premium = col1.toggle("启用加密货币监控", value=current["ENABLE_PREMIUM_MONITOR"])
-        enable_premium_cruise = col2.checkbox("启用巡航", value=current["ENABLE_PREMIUM_CRUISE"])
-        enable_premium_watch = col3.checkbox("启用盯盘", value=current["ENABLE_PREMIUM_WATCH"])
-
-        st.markdown("**运行频率**")
-        col1, col2 = st.columns(2)
-        premium_cruise = col1.number_input(
-            "巡航间隔 (分钟)",
-            min_value=1,
-            max_value=1440,
-            value=int(current["PREMIUM_CRUISE_INTERVAL_MINUTES"]),
-            step=1,
-            key="premium_crypto_cruise",
+        enable_premium, enable_premium_cruise, enable_premium_watch = render_module_switches(
+            key_prefix="premium_crypto",
+            enable_label="启用加密货币监控",
+            enable_value=bool(current["ENABLE_PREMIUM_MONITOR"]),
+            cruise_value=bool(current["ENABLE_PREMIUM_CRUISE"]),
+            watch_value=bool(current["ENABLE_PREMIUM_WATCH"]),
         )
-        premium_watch = col2.number_input(
-            "盯盘间隔 (秒)",
-            min_value=5,
-            max_value=3600,
-            value=int(current["PREMIUM_WATCH_INTERVAL_SECONDS"]),
-            step=5,
-            key="premium_crypto_watch",
+        premium_cruise, premium_watch = render_dual_interval_inputs(
+            key_prefix="premium_crypto",
+            cruise_value=int(current["PREMIUM_CRUISE_INTERVAL_MINUTES"]),
+            watch_value=int(current["PREMIUM_WATCH_INTERVAL_SECONDS"]),
         )
 
         premium_windows = render_time_window("PREMIUM", current, key_prefix="PREMIUM_CRYPTO")
 
         st.markdown("**加密货币阈值**")
-        crypto_threshold_widths = [0.9, 0.9, 1.1, 0.8, 1, 0.8, 1.1, 0.8, 1, 0.8, 1.1]
-        render_threshold_header(
-            crypto_threshold_widths,
-            [
-                "资产",
-                "阈值组",
-                "名称",
-                "升水启用",
-                "升水阈值(%)",
-                "年化升水启用",
-                "年化升水阈值(%)",
-                "贴水启用",
-                "贴水阈值(%)",
-                "年化贴水启用",
-                "年化贴水阈值(%)",
-            ],
+        premium_threshold_updates = render_premium_threshold_rows(
+            rows=crypto_rows,
+            all_rows=premium_rows,
+            key_prefix="premium_crypto",
+            include_asset_columns=True,
         )
-        premium_threshold_updates = build_premium_threshold_payload(premium_rows)
-        for row in crypto_rows:
-            cols = st.columns(crypto_threshold_widths)
-            threshold_key = row["threshold_key"]
-            cols[0].markdown(f"`{row['asset_group']}`")
-            cols[1].markdown(row["bucket_label"])
-            cols[2].markdown(row["name"])
-            upper_enabled = cols[3].checkbox(
-                f"{threshold_key}_upper_enabled",
-                value=bool(row.get("upper_enabled", True)),
-                label_visibility="collapsed",
-                key=f"premium_crypto_upper_enabled_{threshold_key}",
-            )
-            upper_threshold = cols[4].number_input(
-                f"{threshold_key}_upper",
-                min_value=0.0,
-                value=float(row["upper"]),
-                step=0.1,
-                label_visibility="collapsed",
-                key=f"premium_crypto_upper_{threshold_key}",
-            )
-            annualized_upper_enabled = cols[5].checkbox(
-                f"{threshold_key}_annualized_upper_enabled",
-                value=bool(row.get("annualized_upper_enabled", True)),
-                label_visibility="collapsed",
-                key=f"premium_crypto_annualized_upper_enabled_{threshold_key}",
-            )
-            annualized_upper_threshold = cols[6].number_input(
-                f"{threshold_key}_annualized_upper",
-                min_value=0.0,
-                value=float(row["annualized_upper"]),
-                step=0.1,
-                label_visibility="collapsed",
-                key=f"premium_crypto_annualized_upper_{threshold_key}",
-            )
-            lower_enabled = cols[7].checkbox(
-                f"{threshold_key}_lower_enabled",
-                value=bool(row.get("lower_enabled", True)),
-                label_visibility="collapsed",
-                key=f"premium_crypto_lower_enabled_{threshold_key}",
-            )
-            lower_threshold = cols[8].number_input(
-                f"{threshold_key}_lower",
-                max_value=0.0,
-                value=float(row["lower"]),
-                step=0.1,
-                label_visibility="collapsed",
-                key=f"premium_crypto_lower_{threshold_key}",
-            )
-            annualized_lower_enabled = cols[9].checkbox(
-                f"{threshold_key}_annualized_lower_enabled",
-                value=bool(row.get("annualized_lower_enabled", True)),
-                label_visibility="collapsed",
-                key=f"premium_crypto_annualized_lower_enabled_{threshold_key}",
-            )
-            annualized_lower_threshold = cols[10].number_input(
-                f"{threshold_key}_annualized_lower",
-                max_value=0.0,
-                value=float(row["annualized_lower"]),
-                step=0.1,
-                label_visibility="collapsed",
-                key=f"premium_crypto_annualized_lower_{threshold_key}",
-            )
-            premium_threshold_updates[threshold_key] = {
-                "upper_enabled": bool(upper_enabled),
-                "upper": float(upper_threshold),
-                "annualized_upper_enabled": bool(annualized_upper_enabled),
-                "annualized_upper": float(annualized_upper_threshold),
-                "lower_enabled": bool(lower_enabled),
-                "lower": float(lower_threshold),
-                "annualized_lower_enabled": bool(annualized_lower_enabled),
-                "annualized_lower": float(annualized_lower_threshold),
-            }
 
         save_premium_crypto = st.form_submit_button("保存加密货币设置", use_container_width=True)
 
@@ -791,27 +846,17 @@ with st.expander("加密货币", expanded=False):
 with st.expander("可转债", expanded=False):
     st.caption("可转债模块的监控开关、时钟和负溢价/安全价格/双低/YTM 阈值都在这里。")
     with st.form("convertible_module_form"):
-        st.markdown("**模块开关**")
-        col1, col2, col3 = st.columns(3)
-        enable_convertible = col1.toggle("启用可转债监控", value=current["ENABLE_CONVERTIBLE_MONITOR"])
-        enable_convertible_cruise = col2.checkbox("启用巡航", value=current["ENABLE_CONVERTIBLE_CRUISE"])
-        enable_convertible_watch = col3.checkbox("启用盯盘", value=current["ENABLE_CONVERTIBLE_WATCH"])
-
-        st.markdown("**运行频率**")
-        col1, col2 = st.columns(2)
-        convertible_cruise = col1.number_input(
-            "巡航间隔 (分钟)",
-            min_value=1,
-            max_value=1440,
-            value=int(current["CONVERTIBLE_CRUISE_INTERVAL_MINUTES"]),
-            step=1,
+        enable_convertible, enable_convertible_cruise, enable_convertible_watch = render_module_switches(
+            key_prefix="convertible_module",
+            enable_label="启用可转债监控",
+            enable_value=bool(current["ENABLE_CONVERTIBLE_MONITOR"]),
+            cruise_value=bool(current["ENABLE_CONVERTIBLE_CRUISE"]),
+            watch_value=bool(current["ENABLE_CONVERTIBLE_WATCH"]),
         )
-        convertible_watch = col2.number_input(
-            "盯盘间隔 (秒)",
-            min_value=5,
-            max_value=3600,
-            value=int(current["CONVERTIBLE_WATCH_INTERVAL_SECONDS"]),
-            step=5,
+        convertible_cruise, convertible_watch = render_dual_interval_inputs(
+            key_prefix="convertible_module",
+            cruise_value=int(current["CONVERTIBLE_CRUISE_INTERVAL_MINUTES"]),
+            watch_value=int(current["CONVERTIBLE_WATCH_INTERVAL_SECONDS"]),
         )
 
         convertible_windows = render_time_window("CONVERTIBLE", current)
@@ -900,18 +945,16 @@ with st.expander("可转债", expanded=False):
 with st.expander("舆情", expanded=False):
     st.caption("舆情模块的监控开关、运行窗口和阈值都在这里。")
     with st.form("sentiment_module_form"):
-        st.markdown("**模块开关**")
-        col1, col2 = st.columns(2)
-        enable_sentiment = col1.toggle("启用舆情监控", value=current["ENABLE_SENTIMENT_MONITOR"])
-        enable_sentiment_cruise = col2.checkbox("启用巡航", value=current["ENABLE_SENTIMENT_CRUISE"])
-
-        st.markdown("**运行频率**")
-        sentiment_cruise = st.number_input(
-            "低频间隔 (分钟)",
-            min_value=1,
-            max_value=1440,
+        enable_sentiment, enable_sentiment_cruise, _ = render_module_switches(
+            key_prefix="sentiment_module",
+            enable_label="启用舆情监控",
+            enable_value=bool(current["ENABLE_SENTIMENT_MONITOR"]),
+            cruise_value=bool(current["ENABLE_SENTIMENT_CRUISE"]),
+        )
+        sentiment_cruise = render_single_interval_input(
+            key_prefix="sentiment_module",
+            label="低频间隔 (分钟)",
             value=int(current["SENTIMENT_CRUISE_INTERVAL_MINUTES"]),
-            step=1,
         )
 
         sentiment_windows = render_time_window("SENTIMENT", current)
@@ -995,77 +1038,23 @@ with st.expander("金属套利", expanded=False):
     current_threshold_values = flatten_threshold_values(threshold_rows)
 
     with st.form("metals_module_form"):
-        st.markdown("**模块开关**")
-        col1, col2, col3 = st.columns(3)
-        enable_metals = col1.toggle("启用金属套利监控", value=current["ENABLE_METALS_MONITOR"])
-        enable_metals_cruise = col2.checkbox("启用巡航", value=current["ENABLE_METALS_CRUISE"])
-        enable_metals_watch = col3.checkbox("启用盯盘", value=current["ENABLE_METALS_WATCH"])
-
-        st.markdown("**运行频率**")
-        col1, col2 = st.columns(2)
-        metals_cruise = col1.number_input(
-            "巡航间隔 (分钟)",
-            min_value=1,
-            max_value=1440,
-            value=int(current["METALS_CRUISE_INTERVAL_MINUTES"]),
-            step=1,
+        enable_metals, enable_metals_cruise, enable_metals_watch = render_module_switches(
+            key_prefix="metals_module",
+            enable_label="启用金属套利监控",
+            enable_value=bool(current["ENABLE_METALS_MONITOR"]),
+            cruise_value=bool(current["ENABLE_METALS_CRUISE"]),
+            watch_value=bool(current["ENABLE_METALS_WATCH"]),
         )
-        metals_watch = col2.number_input(
-            "盯盘间隔 (秒)",
-            min_value=5,
-            max_value=3600,
-            value=int(current["METALS_WATCH_INTERVAL_SECONDS"]),
-            step=5,
+        metals_cruise, metals_watch = render_dual_interval_inputs(
+            key_prefix="metals_module",
+            cruise_value=int(current["METALS_CRUISE_INTERVAL_MINUTES"]),
+            watch_value=int(current["METALS_WATCH_INTERVAL_SECONDS"]),
         )
 
         metals_windows = render_time_window("METALS", current)
 
         st.markdown("**金属阈值**")
-        metals_threshold_widths = [1, 1.2, 0.8, 1, 0.8, 1]
-        render_threshold_header(
-            metals_threshold_widths,
-            ["代码", "名称", "升水启用", "升水阈值(%)", "贴水启用", "贴水阈值(%)"],
-        )
-        threshold_updates: dict[str, dict[str, float | bool]] = {}
-        for row in threshold_rows:
-            cols = st.columns(metals_threshold_widths)
-            cols[0].markdown(f"`{row['symbol']}`")
-            cols[1].markdown(row["name"])
-            upper_enabled = cols[2].checkbox(
-                f"{row['symbol']}_upper_enabled",
-                value=bool(row.get("upper_enabled", True)),
-                label_visibility="collapsed",
-                key=f"threshold_upper_enabled_{row['symbol']}",
-            )
-            upper = cols[3].number_input(
-                f"{row['symbol']}_upper",
-                min_value=0.0,
-                value=float(row["upper"]),
-                step=0.1,
-                label_visibility="collapsed",
-                key=f"threshold_upper_{row['symbol']}",
-            )
-            lower_enabled = cols[4].checkbox(
-                f"{row['symbol']}_lower_enabled",
-                value=bool(row.get("lower_enabled", True)),
-                label_visibility="collapsed",
-                key=f"threshold_lower_enabled_{row['symbol']}",
-            )
-            lower = cols[5].number_input(
-                f"{row['symbol']}_lower",
-                min_value=-1000.0,
-                max_value=0.0,
-                value=float(row["lower"]),
-                step=0.1,
-                label_visibility="collapsed",
-                key=f"threshold_lower_{row['symbol']}",
-            )
-            threshold_updates[row["symbol"]] = {
-                "upper": float(upper),
-                "lower": float(lower),
-                "upper_enabled": bool(upper_enabled),
-                "lower_enabled": bool(lower_enabled),
-            }
+        threshold_updates = render_metals_threshold_rows(threshold_rows)
 
         save_metals = st.form_submit_button("保存金属设置", use_container_width=True)
         reset_metals = st.form_submit_button("恢复金属阈值默认值")

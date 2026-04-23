@@ -5,7 +5,7 @@ from typing import List
 from models.market_data import PremiumArbitrageData
 from models.signals import Signal
 from strategies.base import BaseStrategy
-from utils.premium_config import CONTRACT_BUCKET_LABELS, get_effective_premium_threshold
+from config.premium_thresholds import CONTRACT_BUCKET_LABELS, get_effective_premium_threshold
 
 
 class PremiumArbitrageStrategy(BaseStrategy):
