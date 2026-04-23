@@ -14,7 +14,9 @@
 - 期指贴水监控
 - 可转债负溢价和双低监控
 - 舆情/热度监控
-- 调度器
+- 金属套利监控（黄金、白银）
+- 期现溢价监控（A50、加密资产）
+- 调度器（模块独立时钟 + GUI 可调）
 - SQLite 存储
 - 冷却期恢复
 - Streamlit 看板
@@ -23,9 +25,9 @@
 以下内容不属于当前协作主线：
 
 - 宏观策略
-- 加密货币策略
 - 盈透策略
 - 自动下单
+- 加密货币交易策略（仅支持数据采集）
 
 ---
 
@@ -35,18 +37,31 @@
 
 - `docs/requirements_codex_v1.md`
 - `config/settings.py`
+- `config/futures_thresholds.json`
+- `config/metals_thresholds.json`
+- `config/premium_thresholds.json`
 - `models/market_data.py`
 - `models/signals.py`
 - `strategies/base.py`
 
 ### 当前实现文件
 
-- `fetchers/ak_futures.py`
-- `fetchers/ak_convertible.py`
-- `fetchers/sentiment_spider.py`
-- `strategies/futures_strategy.py`
-- `strategies/cb_strategy.py`
-- `strategies/sentiment_strategy.py`
+#### Fetchers（数据获取）
+- `fetchers/ak_futures.py` - 期指数据
+- `fetchers/ak_convertible.py` - 可转债数据
+- `fetchers/sentiment_spider.py` - 舆情/热度数据
+- `fetchers/ak_metals.py` - 金属套利数据
+- `fetchers/premium_fetcher.py` - 期现溢价数据
+- `fetchers/futures_margin.py` - 保证金数据
+
+#### Strategies（策略）
+- `strategies/futures_strategy.py` - 期指策略
+- `strategies/cb_strategy.py` - 可转债策略
+- `strategies/sentiment_strategy.py` - 舆情策略
+- `strategies/metals_strategy.py` - 金属策略
+- `strategies/premium_strategy.py` - 期现溢价策略
+
+#### 核心文件
 - `core_scheduler.py`
 - `app_dashboard.py`
 - `utils/db_manager.py`
@@ -133,10 +148,21 @@
 
 ## 6. 后续扩展规则
 
-如果未来启动 `macro`、`crypto` 或 `ib` 模块，必须先做以下动作：
+如果未来启动 `macro` 或 `ib` 模块，必须先做以下动作：
 
 1. 在 `docs/requirements_codex_v1.md` 中把该模块升级为正式范围。
 2. 在 `docs/api_registry.md` 中补数据源台账。
 3. 再新增代码文件和测试。
 
+**加密货币特别说明**：
+- 加密货币数据采集（`crypto_cash_and_carry_research`）当前为 RESEARCH_ONLY 状态
+- 若需升级为正式模块，需先在 `requirements_codex_v1.md` 中把该模块从研究阶段升级为正式范围
+
 未经上述步骤，不得把规划内容写入当前主交付状态。
+
+---
+
+## 7. 版本信息
+
+> 最后更新: 2026-04-23
+> 当前集成测试: 36 通过

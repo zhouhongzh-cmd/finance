@@ -2,9 +2,10 @@
 
 > 说明: 本文档为历史执行记录。当前项目主基线已切换到 `docs/requirements_codex_v1.md`。
 
-> **更新时间**: 2026-03-12  
-> **负责人**: AI-Integration (集成组)  
-> **状态**: ✅ 已完成  
+> **更新时间**: 2026-04-23
+> **最后同步**: `progress.md` 更新至 2026-04-22，集成测试 36 通过
+> **负责人**: AI-Integration (集成组)
+> **状态**: ✅ 已完成（持续维护中）
 > **模块职责**: L2 调度器 + L5 看板 + L6 运维部署
 
 ---
@@ -40,6 +41,13 @@
 - `Futures_Discount_Arbitrage` (期指贴水)
 - `Convertible_Arbitrage` (转债负溢价 + 双低)
 - `Sentiment_Heat_and_Risk` (舆情热度)
+- `Metals_Arbitrage` (金属套利 - 黄金、白银)
+- `Premium_Arbitrage` (期现溢价 - A50、加密资产)
+
+**调度器演进**:
+- ✅ 模块独立时钟（各策略可独立配置频率）
+- ✅ GUI 可调（通过 config/runtime_settings.json）
+- ✅ 交易时段动态频率切换 (巡航 5 分钟/盯盘 30 秒)
 
 ---
 
@@ -84,7 +92,10 @@
 
 ## 3. 端到端测试结果
 
-**测试时间**: 2026-03-12 13:39:56
+> **当前状态**: 测试已更新至 36 通过（2026-04-22）
+> 详细测试结果见 `tests/test_integration.py`
+
+**历史测试时间**: 2026-03-12 13:39:56
 
 ```
 ============================================================
@@ -101,7 +112,7 @@
 ✅ Full Pipeline: 2 signals processed
 
 ============================================================
-📊 测试结果：6 通过，0 失败
+📊 测试结果：6 通过，0 失败 (历史记录)
 ============================================================
 ```
 
@@ -112,6 +123,9 @@
 - ✅ 策略信号生成
 - ✅ 调度器导入
 - ✅ 完整链路 (数据→策略→数据库→通知)
+- ✅ 金属策略 (metals_strategy.py)
+- ✅ 期现溢价策略 (premium_strategy.py)
+- ✅ 配置文件解析 (futures_thresholds.json, metals_thresholds.json, premium_thresholds.json)
 
 ---
 
@@ -177,11 +191,19 @@ docker-compose logs -f arbitrage_monitor
 
 ### Phase 2 待开发模块
 
+> 注: 以下内容已根据 progress.md (2026-04-22) 更新
+
 | 模块 | 文件 | 状态 |
 |------|------|------|
-| 币安套利组 | `fetchers/binance_funding.py` + `strategies/crypto_strategy.py` | ⏳ PENDING |
-| 盈透套利组 | `fetchers/ib_margin.py` + `strategies/ib_strategy.py` | ⏳ PENDING |
+| 加密期现链路增强 | 增加更多交易所切换预案 | ⏳ PENDING |
+| 通知链路增强 | Phase 2 通知增强 | ⏳ PENDING |
 | 宏观策略组 | `fetchers/ak_macro.py` + `strategies/macro_strategy.py` | ⏳ PENDING |
+| 盈透套利组 | `fetchers/ib_margin.py` + `strategies/ib_strategy.py` | ⏳ PENDING |
+
+**已完成的 Phase 2 项**:
+- ✅ 金属套利 (ak_metals.py + metals_strategy.py)
+- ✅ 期现溢价 (premium_fetcher.py + premium_strategy.py)
+- ✅ 模块独立时钟 + GUI 可调
 
 ### 优化建议
 
@@ -196,11 +218,13 @@ docker-compose logs -f arbitrage_monitor
 
 | 层级 | 模块 | 状态 |
 |------|------|------|
-| L1 数据层 | 期指/转债/舆情 Fetcher | ✅ 3/3 完成 |
-| L2 调度层 | 核心调度器 | ✅ 完成 |
-| L3 策略层 | 期指/转债/舆情策略 | ✅ 3/6 完成 |
+| L1 数据层 | 期指/转债/舆情/金属/期现 Fetcher | ✅ 6/6 完成 |
+| L2 调度层 | 核心调度器（独立时钟+GUI可调） | ✅ 完成 |
+| L3 策略层 | 期指/转债/舆情/金属/期现策略 | ✅ 5/6 完成 |
 | L4 存储层 | SQLite WAL 管理器 | ✅ 完成 |
 | L5 看板层 | Streamlit 看板 | ✅ 完成 |
 | L6 运维层 | Docker 部署配置 | ✅ 完成 |
 
 **系统已具备生产部署条件** ✅
+
+**当前集成测试**: 36 通过
