@@ -19,6 +19,12 @@ from models.signals import Signal
 
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "monitor_history.db"
+DB_PATH_ENV = "ARBITRAGE_MONITOR_DB_PATH"
+
+
+def resolve_db_path(db_path: str | os.PathLike[str] | None = None) -> str:
+    configured = db_path or os.environ.get(DB_PATH_ENV) or DEFAULT_DB_PATH
+    return str(Path(configured).expanduser().resolve())
 
 
 class DBManager:
@@ -27,16 +33,17 @@ class DBManager:
     _lock = threading.Lock()
     SNAPSHOT_HEARTBEAT_MINUTES = 15
     
-    def __new__(cls, db_path: str | os.PathLike[str] = DEFAULT_DB_PATH):
+    def __new__(cls, db_path: str | os.PathLike[str] | None = None):
+        resolved_db_path = resolve_db_path(db_path)
         with cls._lock:
-            if cls._instance is None:
+            if cls._instance is None or getattr(cls._instance, "db_path", None) != resolved_db_path:
                 cls._instance = super(DBManager, cls).__new__(cls)
                 cls._instance._write_lock = threading.Lock()
-                cls._instance._init_db(db_path)
+                cls._instance._init_db(resolved_db_path)
         return cls._instance
 
     def _init_db(self, db_path):
-        db_path = str(Path(db_path).expanduser().resolve())
+        db_path = resolve_db_path(db_path)
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.db_path = db_path
         with self.get_connection() as conn:

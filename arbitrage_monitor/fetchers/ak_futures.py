@@ -64,12 +64,16 @@ def get_active_contracts(today: Optional[date] = None) -> List[Tuple[str, str, i
             m = 1
             y += 1
 
-    # 中金所股指期货实际挂牌规则：
-    # 当月、下月，以及之后最近的两个季月。
-    # 如果当前月本身就是季月，不能因为去重而少掉“下下个季月”。
-    front_months = candidate_months[:2]
+    valid_months: list[tuple[int, int]] = []
+    for cy, cm in candidate_months:
+        if get_third_friday(cy, cm) >= today:
+            valid_months.append((cy, cm))
+
+    # 中金所股指期货实际挂牌规则：有效月份中的当月、下月，以及之后最近两个季月。
+    # 交割日后要先剔除已到期月份，再补足远月，否则月底前会少抓一组合约。
+    front_months = valid_months[:2]
     quarterly = [
-        cm for cm in candidate_months
+        cm for cm in valid_months
         if cm[1] in (3, 6, 9, 12) and cm not in front_months
     ]
     active_months = front_months + quarterly[:2]
@@ -79,10 +83,6 @@ def get_active_contracts(today: Optional[date] = None) -> List[Tuple[str, str, i
         for cy, cm in active_months:
             delivery = get_third_friday(cy, cm)
             days_to_maturity = (delivery - today).days
-
-            # 若该合约已经过了交割日则跳过
-            if days_to_maturity < 0:
-                continue
 
             # 合约符号格式：IF2503, IC2506, ...
             contract_sym = f"{idx_sym}{str(cy)[2:]}{cm:02d}"

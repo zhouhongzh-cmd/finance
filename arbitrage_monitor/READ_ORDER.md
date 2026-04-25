@@ -24,7 +24,13 @@
 5. `docs/progress.md`
 作用：查看当前交付状态、待补能力和历史子进度链接。
 
-6. `docs/multi_device_sync_guide.md`
+6. `docs/run_guide.md`
+作用：需要启动调度器、看板、Docker 或验证运行状态时，按此文档执行。
+
+7. `docs/metals_arbitrage_design.md` / `docs/premium_arbitrage_design.md`
+作用：修改金属套利或 A50 / crypto 期现溢价模块时，先确认对应专题的数据契约、阈值、快照和看板口径。
+
+8. `docs/multi_device_sync_guide.md`
 作用：当需要在多台电脑之间同步代码、配置 GitHub SSH 或切换工作机器时，按此文档执行。
 
 ---

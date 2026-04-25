@@ -25,6 +25,35 @@ configure_logger()
 
 from utils.logger import logger
 
+def test_active_contracts_roll_after_expiry():
+    """测试交割日后仍补足当月、下月、当季、下季四档合约。"""
+    logger.info("test_active_contracts_roll_after_expiry_start")
+
+    from datetime import date
+    from fetchers.ak_futures import get_active_contracts
+
+    cases = [
+        (date(2026, 4, 16), ["2604", "2605", "2606", "2609"]),
+        (date(2026, 4, 25), ["2605", "2606", "2609", "2612"]),
+        (date(2026, 6, 20), ["2607", "2608", "2609", "2612"]),
+    ]
+
+    for today, expected_months in cases:
+        rows = get_active_contracts(today)
+        months = sorted({symbol[2:] for symbol, _, _ in rows})
+        if len(rows) != 16:
+            print(f"❌ Active Contracts: {today} expected 16 rows, got {len(rows)}")
+            return False
+        if months != expected_months:
+            print(
+                f"❌ Active Contracts: {today} expected months {expected_months}, got {months}"
+            )
+            return False
+
+    logger.info("active_contracts_roll_after_expiry_ok")
+    print("✅ Active Contracts Roll After Expiry: OK")
+    return True
+
 def test_futures_dual_threshold_trigger():
     """测试期指贴水率阈值和年化贴水率阈值必须同时触发才报警。"""
     logger.info("test_futures_dual_threshold_trigger_start")
@@ -369,4 +398,3 @@ def test_spot_index_fallback_parser():
     logger.info("spot_index_fallback_parser_ok", count=len(parsed))
     print("✅ Spot Index Fallback: parser OK")
     return True
-

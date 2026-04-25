@@ -23,6 +23,8 @@
 这些文档承接某一专题的细节设计，但不得与主基线冲突：
 
 - `dashboard_phase2.md`
+- `metals_arbitrage_design.md`
+- `premium_arbitrage_design.md`
 
 ### B. 进度文档
 
@@ -44,6 +46,7 @@
 
 - `READ_ORDER.md`
 - `README.md` 作为项目入口说明，负责把运行入口、配置入口和主基线链接起来
+- `run_guide.md` 作为当前可执行运行手册，负责本机直跑、Docker、配置分工和验证步骤
 - `new_module_integration_guide.md` 作为新增品种 / 模块的落地接入清单
 - `refactor_plan_20260423.md` 作为当前结构治理执行基线
 
@@ -56,7 +59,7 @@
 1. `requirements_codex_v1.md`
 2. `CONTRIBUTING.md`
 3. `api_registry.md`
-4. 对应专题设计文档（如 `dashboard_phase2.md`）
+4. 对应专题设计文档（如 `dashboard_phase2.md`、`metals_arbitrage_design.md`、`premium_arbitrage_design.md`）
 5. `progress.md`
 
 历史文档只用于回看，不用于决定当前实现。
@@ -103,6 +106,22 @@
 - 看板视图结构
 - 看板快照数据层需求
 - 看板交互约束
+
+### `metals_arbitrage_design.md`
+
+负责定义：
+
+- 金属套利模块专题设计
+- 金属数据契约、计算口径和阈值语义
+- 金属快照表与看板展示要求
+
+### `premium_arbitrage_design.md`
+
+负责定义：
+
+- A50 / crypto 期现溢价模块专题设计
+- A50 与 Top10 crypto / 加密资产池的数据契约
+- 合约桶、阈值、快照表和看板展示要求
 
 ### `progress.md`
 
