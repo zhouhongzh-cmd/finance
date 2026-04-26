@@ -108,8 +108,15 @@ sqlite3 data/monitor_history.db "SELECT COUNT(*) FROM job_run_status;"
 如果只验证代码和测试:
 
 ```bash
+python3 scripts/check_standard.py
 python3 -m pytest -q
 python3 -m compileall -q .
+```
+
+如果希望提交前一次跑完标准检查和两类 pytest 口径:
+
+```bash
+python3 scripts/check_standard.py --pytest --legacy-pytest
 ```
 
 ## 5. 配置分工
