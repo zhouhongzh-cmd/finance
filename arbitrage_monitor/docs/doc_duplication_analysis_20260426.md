@@ -1,5 +1,10 @@
 # 文档功能重复分析报告
 
+> 生命周期状态: DOC_GOVERNANCE_ANALYSIS
+> 原路径: `finance/doc_duplication_analysis.md`
+> 归档时间: 2026-04-28
+> 说明: 报告中的根目录路径描述反映分析时状态；当前文档生命周期以 `docs/DOC_STANDARDS.md` 为准。
+>
 > 分析时间: 2026-04-26
 > 分析范围: `arbitrage_monitor` 全部文档 + `finance/` 根目录文档
 

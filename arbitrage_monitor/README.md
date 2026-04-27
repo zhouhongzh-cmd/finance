@@ -29,6 +29,7 @@
 
 ## 文档入口
 
+- AI 协作入口： [AGENTS.md](AGENTS.md)
 - 协作规则： [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
 - 文档基线： [docs/DOC_STANDARDS.md](docs/DOC_STANDARDS.md)
 - 数据源台账： [docs/api_registry.md](docs/api_registry.md)

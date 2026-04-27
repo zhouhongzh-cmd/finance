@@ -1,37 +1,13 @@
 # AI Read Order
 
-> 当前项目的主需求基线已切换到 `docs/requirements_codex_v1.md`。
-> `docs/requirements.md` 仅保留为历史兼容入口，不再作为首选事实来源。
+> 兼容入口：当前 AI 主入口已收敛到 `AGENTS.md`。
+> 本文件不再维护独立阅读顺序，只保留旧链接兼容说明。
 
 ---
 
 ## Required Reading Order
 
-在生成代码、计划或修改任何文件之前，必须按以下顺序阅读：
-
-1. `docs/requirements_codex_v1.md`
-作用：理解当前版本的 `MVP`、数据契约、失败处理、通知语义和验收标准。
-
-2. `docs/CONTRIBUTING.md`
-作用：理解当前协作边界、可修改文件范围和文档更新规则。
-
-3. `docs/api_registry.md`
-作用：确认当前 `MVP` 实际使用的数据源、限制和降级路径。
-
-4. `docs/DOC_STANDARDS.md`
-作用：确认哪份文档是当前基线，哪些文档属于历史记录。
-
-5. `docs/progress.md`
-作用：查看当前交付状态、待补能力和历史子进度链接。
-
-6. `docs/run_guide.md`
-作用：需要启动调度器、看板、Docker 或验证运行状态时，按此文档执行。
-
-7. `docs/metals_arbitrage_design.md` / `docs/premium_arbitrage_design.md`
-作用：修改金属套利或 A50 / crypto 期现溢价模块时，先确认对应专题的数据契约、阈值、快照和看板口径。
-
-8. `docs/multi_device_sync_guide.md`
-作用：当需要在多台电脑之间同步代码、配置 GitHub SSH 或切换工作机器时，按此文档执行。
+在生成代码、计划或修改任何文件之前，先读 `AGENTS.md` 的“开始前必读”部分。
 
 ---
 
@@ -41,16 +17,14 @@
 
 - `docs/requirements.md`
 - `docs/code_review_report.md`
+- `docs/code_review_report_*.md`
+- `docs/doc_*_report_*.md`
 - `docs/progress_ai_*.md`
 
-这些文档主要反映旧阶段设计、审查结果或历史过程。
+这些文档主要反映旧阶段设计、审查结果或历史过程。文档类别和事实来源优先级见 `docs/DOC_STANDARDS.md`。
 
 ---
 
 ## Post-Task Rules
 
-完成任务后应遵守：
-
-1. 在合适的 `progress` 文档中记录结果或状态变化。
-2. 若外部接口限制或降级策略发生变化，更新 `docs/api_registry.md`。
-3. 若需求边界发生变化，优先修改 `docs/requirements_codex_v1.md`，再改代码。
+完成任务后的文档同步规则以 `docs/CONTRIBUTING.md` 和 `docs/DOC_STANDARDS.md` 为准。

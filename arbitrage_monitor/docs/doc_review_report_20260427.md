@@ -1,5 +1,10 @@
 # 文档重复与冲突审查报告
 
+> 生命周期状态: DOC_GOVERNANCE_REVIEW
+> 原路径: `finance/doc_review_report.md`
+> 归档时间: 2026-04-28
+> 说明: 报告中的根目录路径描述反映审查时状态；当前文档生命周期以 `docs/DOC_STANDARDS.md` 为准。
+>
 > 审查日期：2026-04-27
 > 审查范围：项目内全部 37 份 Markdown 文档
 > 分支：codex/crypto-carry-research

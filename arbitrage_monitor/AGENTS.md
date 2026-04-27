@@ -6,11 +6,14 @@
 
 ## 开始前必读
 
+`AGENTS.md` 是本项目唯一 AI 主入口；`CLAUDE.md` 和 `READ_ORDER.md` 只保留为工具兼容或旧链接入口。
+
 1. `docs/requirements_codex_v1.md`：当前需求边界、数据契约和验收标准。
-2. `docs/CONTRIBUTING.md`：协作规则、核心文件、文档同步要求。
+2. `docs/CONTRIBUTING.md`：协作规则、变更分类、文档同步要求和测试口径。
 3. `docs/api_registry.md`：真实数据源、fallback 和状态。
-4. `docs/run_guide.md`：本机运行和验证入口。
-5. `docs/error_journal.md`：已知事故、规则来源和待观察项。
+4. `docs/DOC_STANDARDS.md`：文档分类、事实来源优先级和生命周期规则。
+5. `docs/run_guide.md`：本机运行和验证入口。
+6. `docs/error_journal.md`：已知事故、规则来源和待观察项。
 
 `PLAN.md` 若存在，仅作为短期接力或治理计划参考，不得当作正式项目状态；正式状态以 `docs/progress.md` 和当前基线文档为准。
 
@@ -24,6 +27,8 @@
 - Dashboard 默认走 SQLite 快照；“强制抓新”才允许联网并回写快照。
 
 ## 不变量
+
+完整约束以 `docs/CONTRIBUTING.md` 为准，本节只列高频不变量：
 
 - 所有策略返回 `list[Signal]`。
 - `fetch_live()` 与 `fetch_from_fixture()` 返回同一数据契约。
