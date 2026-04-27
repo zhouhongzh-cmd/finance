@@ -249,7 +249,7 @@
 ### 1.19 加密资产稳定币收益率研究台账
 
 - `status`: `RESEARCH_ONLY`
-- `module`: `docs/crypto_cash_and_carry_research_20260418.md`
+- `module`: `docs/research/crypto_cash_and_carry_research_20260418.md`
 - `name`: `exchange earn/savings flexible rate endpoints`
 - `call`: `官方 REST 文档与最小直连验证`
 - `rate_limit`: 依交易所而定

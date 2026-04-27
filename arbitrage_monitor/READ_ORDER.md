@@ -16,9 +16,9 @@
 以下文档仍可参考，但不应优先用作当前实现依据：
 
 - `docs/requirements.md`
-- `docs/code_review_report.md`
-- `docs/code_review_report_*.md`
-- `docs/doc_*_report_*.md`
+- `docs/reviews/code_review_report.md`
+- `docs/reviews/code_review_report_*.md`
+- `docs/reviews/doc_*_report_*.md`
 - `docs/progress_ai_*.md`
 
 这些文档主要反映旧阶段设计、审查结果或历史过程。文档类别和事实来源优先级见 `docs/DOC_STANDARDS.md`。

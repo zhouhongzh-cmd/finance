@@ -37,3 +37,5 @@
 - A50 / crypto 期现溢价设计： [docs/premium_arbitrage_design.md](docs/premium_arbitrage_design.md)
 - 新增品种接入： [docs/new_module_integration_guide.md](docs/new_module_integration_guide.md)
 - 结构治理计划： [docs/refactor_plan_20260423.md](docs/refactor_plan_20260423.md)
+- 研究文档目录： [docs/research/](docs/research/)
+- 审查与治理报告： [docs/reviews/](docs/reviews/)

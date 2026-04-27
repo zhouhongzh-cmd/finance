@@ -3,7 +3,7 @@
 > 生命周期状态: HISTORICAL_REVIEW
 > 原路径: `finance/code_review_report.md`
 > 归档时间: 2026-04-28
-> 说明: 部分结论已由 `docs/code_review_report_20260423_codex_reply.md` 和 `docs/code_review_report_20260425.md` 复核或修正；不得直接当作当前待办清单。
+> 说明: 部分结论已由 `docs/reviews/code_review_report_20260423_codex_reply.md` 和 `docs/reviews/code_review_report_20260425.md` 复核或修正；不得直接当作当前待办清单。
 >
 > 审查时间: 2026-04-23
 > 审查范围: `arbitrage_monitor` 全量代码与文档

@@ -16,7 +16,7 @@
 | 2026-03-13 | `docs/DEV_PROCESS.md` | SQLite 今日查询出现 UTC 日期边界偏移 | 使用裸 `date('now')`，与本地时间存储不一致 | RESOLVED | `check_standard.py` 拦截裸 `date('now')` |
 | 2026-03-14 | `docs/DEV_PROCESS.md` | 雪球匿名访问返回登录错误 | 外部接口反爬升级，强制 token | RESOLVED | 数据源变化必须同步 `api_registry.md` |
 | 2026-04-23 | `排障总结/2026-04-23_dashboard_refresh_db_path.md` | Dashboard 刷新显示后表格不更新 | 残留调度器进程写入旧 DB，且刷新显示只读快照不联网 | RESOLVED | 区分“刷新显示”和“强制抓新” |
-| 2026-04-25 | `docs/code_review_report_20260425.md` | 默认 pytest 曾被非 Python 测试产物阻断 | 测试收集范围被历史输出文件污染 | RESOLVED | 保留默认 pytest 与 `tests/*.py` 两类验证口径 |
-| 2026-04-25 | `docs/code_review_report_20260425.md` | 测试曾直接写默认运行数据库 | `DBManager()` 默认生产路径且有单例状态 | RESOLVED | 会写库测试必须隔离临时 DB |
-| 2026-04-25 | `docs/code_review_report_20260425.md` | Docker healthcheck 只能证明 SQLite 可打开 | 健康检查未覆盖调度器心跳或 Dashboard HTTP | DEFERRED | 进入部署增强时处理 |
+| 2026-04-25 | `docs/reviews/code_review_report_20260425.md` | 默认 pytest 曾被非 Python 测试产物阻断 | 测试收集范围被历史输出文件污染 | RESOLVED | 保留默认 pytest 与 `tests/*.py` 两类验证口径 |
+| 2026-04-25 | `docs/reviews/code_review_report_20260425.md` | 测试曾直接写默认运行数据库 | `DBManager()` 默认生产路径且有单例状态 | RESOLVED | 会写库测试必须隔离临时 DB |
+| 2026-04-25 | `docs/reviews/code_review_report_20260425.md` | Docker healthcheck 只能证明 SQLite 可打开 | 健康检查未覆盖调度器心跳或 Dashboard HTTP | DEFERRED | 进入部署增强时处理 |
 | 2026-04-26 | 当前检查 | `alert_history` 当前按 `asset` 去重 | 当前实现语义如此，是否改为 `strategy+asset` 需要先定设计 | WATCH | 不直接脚本阻断，先人工确认语义 |

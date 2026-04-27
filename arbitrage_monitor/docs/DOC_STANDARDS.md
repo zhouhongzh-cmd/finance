@@ -56,10 +56,10 @@
 
 研究文档用于记录数据源调研、接口可行性和候选实现，不直接升级为当前能力：
 
-- `docs/convertible_and_futures_research_20260315.md`
-- `docs/convertible_fallback_research_20260315.md`
-- `docs/convertible_metric_definitions_20260315.md`
-- `docs/crypto_cash_and_carry_research_20260418.md`
+- `docs/research/convertible_and_futures_research_20260315.md`
+- `docs/research/convertible_fallback_research_20260315.md`
+- `docs/research/convertible_metric_definitions_20260315.md`
+- `docs/research/crypto_cash_and_carry_research_20260418.md`
 
 研究结论若被采纳，必须同步到 `requirements_codex_v1.md`、`api_registry.md` 或对应专题设计文档；未同步前只按 `RESEARCH_ONLY` 处理。
 
@@ -67,12 +67,12 @@
 
 审查报告用于记录某次审查发现和复核过程，不直接覆盖当前事实来源：
 
-- `docs/code_review_report.md`：2026-03-13 历史审查。
-- `docs/code_review_report_20260423.md`：2026-04-23 审查报告。
-- `docs/code_review_report_20260423_codex_reply.md`：2026-04-23 逐条复核批注。
-- `docs/code_review_report_20260425.md`：2026-04-25 审查报告与修正状态。
-- `docs/doc_duplication_analysis_20260426.md`：文档功能重复分析。
-- `docs/doc_review_report_20260427.md`：文档重复与冲突审查。
+- `docs/reviews/code_review_report.md`：2026-03-13 历史审查。
+- `docs/reviews/code_review_report_20260423.md`：2026-04-23 审查报告。
+- `docs/reviews/code_review_report_20260423_codex_reply.md`：2026-04-23 逐条复核批注。
+- `docs/reviews/code_review_report_20260425.md`：2026-04-25 审查报告与修正状态。
+- `docs/reviews/doc_duplication_analysis_20260426.md`：文档功能重复分析。
+- `docs/reviews/doc_review_report_20260427.md`：文档重复与冲突审查。
 
 审查发现进入执行队列时，应闭环到 `docs/error_journal.md`、`docs/progress.md` 或 `docs/DEV_PROCESS.md`；旧报告本身不作为当前待办清单。
 
@@ -131,8 +131,8 @@
 
 1. 新增长期文档默认放入 `arbitrage_monitor/docs/`，不要写到 `finance/` 根目录。
 2. `arbitrage_monitor/` 根目录只保留 `README.md`、`AGENTS.md`、`CLAUDE.md`、`READ_ORDER.md` 这类入口文档。
-3. 审查报告命名使用 `code_review_report_YYYYMMDD.md` 或更明确的 `*_YYYYMMDD.md`。
-4. 研究文档命名使用主题加日期后缀，并在头部说明 `RESEARCH_ONLY`、`PARTIALLY_ADOPTED` 或 `ARCHIVED`。
+3. 审查与治理报告放入 `docs/reviews/`，命名使用 `code_review_report_YYYYMMDD.md` 或更明确的 `*_YYYYMMDD.md`。
+4. 研究文档放入 `docs/research/`，命名使用主题加日期后缀，并在头部说明 `RESEARCH_ONLY`、`PARTIALLY_ADOPTED` 或 `ARCHIVED`。
 5. 发现、修复、驳回、延期等状态必须写入 `error_journal`、`progress` 或报告头部说明，避免旧报告继续冒充当前待办。
 
 ---

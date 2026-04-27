@@ -3,7 +3,7 @@
 > 生命周期状态: REVIEW_REPLY
 > 原路径: `finance/code_review_report_codex_reply.md`
 > 归档时间: 2026-04-28
-> 基于 `docs/code_review_report_20260423.md` 与当前仓库代码/文档状态复核
+> 基于 `docs/reviews/code_review_report_20260423.md` 与当前仓库代码/文档状态复核
 > 复核时间: 2026-04-23
 > 结论标签:
 > - `采纳`: 问题成立，建议进入修复或文档更新队列
