@@ -387,6 +387,7 @@ def test_premium_threshold_local_override():
             btc = premium_config.get_effective_premium_threshold("BTC", "PERP")
             btc_delivery = premium_config.get_effective_premium_threshold("BTC", "QUARTERLY_CURRENT")
             a50 = premium_config.get_effective_premium_threshold("A50")
+            ndx = premium_config.get_effective_premium_threshold("NDX")
         finally:
             premium_config.get_premium_thresholds_path = original_shared_path_fn
             premium_config.get_local_premium_thresholds_path = original_local_path_fn
@@ -403,6 +404,9 @@ def test_premium_threshold_local_override():
         return False
     if float(a50["contango_threshold"]) != 0.5 or float(a50["backwardation_threshold"]) != 0.5:
         print(f"❌ Premium Threshold Override: A50 shared fallback mismatch {a50}")
+        return False
+    if float(ndx["contango_threshold"]) != 0.5 or float(ndx["backwardation_threshold"]) != 0.5:
+        print(f"❌ Premium Threshold Override: NDX default fallback mismatch {ndx}")
         return False
 
     logger.info("premium_threshold_local_override_ok")
@@ -477,6 +481,10 @@ def test_premium_threshold_delivery_mapping():
             premium_config._threshold_cache = original_cache
 
     crypto_btc_rows = [row for row in rows if row["asset_group"] == "BTC"]
+    index_rows = [row for row in rows if row["market"] == "INDEX"]
+    if {"A50", "NDX"} - {str(row["asset_group"]) for row in index_rows}:
+        print(f"❌ Premium Threshold Delivery Mapping: missing index rows {index_rows}")
+        return False
     if {row["contract_bucket"] for row in crypto_btc_rows} != {"PERP", "DELIVERY"}:
         print(f"❌ Premium Threshold Delivery Mapping: unexpected BTC rows {crypto_btc_rows}")
         return False
@@ -526,3 +534,29 @@ def test_config_audit_history():
     print("✅ Config Audit History: OK")
     return True
 
+
+def test_ib_settings_profiles():
+    from pydantic import ValidationError
+    from config.settings import Settings
+
+    probe = Settings(
+        IB_DEFAULT_PROFILE="local",
+        IB_REMOTE_HOST="100.99.204.61",
+        IB_REMOTE_PORT=4001,
+        IB_REMOTE_CLIENT_ID=60101,
+        IB_LOCAL_HOST="127.0.0.1",
+        IB_LOCAL_PORT=4002,
+        IB_LOCAL_CLIENT_ID=60102,
+        IB_GATEWAY_TIMEOUT_SECONDS=20,
+    )
+
+    assert probe.IB_DEFAULT_PROFILE == "local"
+    assert probe.IB_LOCAL_PORT == 4002
+    assert probe.IB_GATEWAY_TIMEOUT_SECONDS == 20
+
+    try:
+        Settings(IB_DEFAULT_PROFILE="invalid")
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("IB_DEFAULT_PROFILE should reject unsupported values")

@@ -15,7 +15,7 @@
 
 最少需要准备:
 
-- `.env`: 本机私密项，例如 Webhook 和 Cookie。
+- `.env`: 本机项，例如 Webhook、Cookie 和 `IB_*` 连接参数。
 - `config/runtime_settings.json`: 共享运行参数。
 - `config/futures_thresholds.json`: 期指阈值。
 - `config/metals_thresholds.json`: 金属阈值。
@@ -40,6 +40,10 @@ pip install -r requirements.txt
 - `WECOM_WEBHOOK_URL`
 - `JSL_COOKIE`
 - `XUEQIU_COOKIE`
+- `IB_DEFAULT_PROFILE`
+- `IB_REMOTE_HOST` / `IB_REMOTE_PORT` / `IB_REMOTE_CLIENT_ID`
+- `IB_LOCAL_HOST` / `IB_LOCAL_PORT` / `IB_LOCAL_CLIENT_ID`
+- `IB_GATEWAY_TIMEOUT_SECONDS`
 
 启动调度器:
 
@@ -119,9 +123,16 @@ python3 -m compileall -q .
 python3 scripts/check_standard.py --pytest --legacy-pytest
 ```
 
+如果需要单独验证 IB Gateway 连通与 `HSI` 行情:
+
+```bash
+python3 scripts/test_ib_gateway_api.py --profile remote --with-hsi
+python3 scripts/test_ib_gateway_api.py --profile local --with-hsi
+```
+
 ## 5. 配置分工
 
-`.env` 只放本机私密项。缺少 Webhook 时程序仍可运行，但不会实际发送到对应渠道；缺少有效 `JSL_COOKIE` 时，可转债数据可能降级。
+`.env` 只放本机环境相关配置。缺少 Webhook 时程序仍可运行，但不会实际发送到对应渠道；缺少有效 `JSL_COOKIE` 时，可转债数据可能降级；缺少可用 `IB_*` 配置时，外盘指数会回退到非 IB 源，`HSI` 则可能直接跳过。
 
 `config/runtime_settings.json` 放共享运行参数，包括模块开关、巡航/盯盘频率、时间窗口和通用阈值。调度器运行中会定期同步。
 

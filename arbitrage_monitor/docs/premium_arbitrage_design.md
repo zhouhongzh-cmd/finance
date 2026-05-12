@@ -1,35 +1,38 @@
-# A50 / Crypto 期现溢价专题设计
+# 外盘指数 / Crypto 期现溢价专题设计
 
 > 状态: ACTIVE
-> 最后更新: 2026-04-26
+> 最后更新: 2026-05-05
 > 关联基线: `docs/requirements_codex_v1.md`
 
 ---
 
 ## 1. 范围
 
-本文档定义当前 A50 / crypto 期现溢价模块的专题设计。主需求边界仍以 `requirements_codex_v1.md` 为准，本文只展开 A50 与 Top10 crypto / 加密资产池的数据契约、阈值、快照和看板展示细节。
+本文档定义当前外盘指数 / crypto 期现溢价模块的专题设计。主需求边界仍以 `requirements_codex_v1.md` 为准，本文只展开外盘指数与 Top10 crypto / 加密资产池的数据契约、阈值、快照和看板展示细节。
 
 当前链路覆盖：
 
 - 数据入口: `fetchers/premium_fetcher.py`
 - 策略判断: `strategies/premium_strategy.py`
 - 阈值配置: `config/premium_thresholds.json`
-- 合约桶与资产池配置: `config/premium_thresholds.py`
+- 资产池配置: `config/premium_assets.py`
+- 合约桶与阈值加载: `config/premium_thresholds.py`
 - 调度入口: `core_scheduler.py`
 - 快照存储: `utils/db_manager.py`
 - 看板展示: `app_dashboard.py`
 
 ---
 
-## 2. A50 与 Crypto 资产范围
+## 2. 外盘指数与 Crypto 资产范围
 
 当前资产组：
 
 | 类型 | 资产组 |
 |------|--------|
-| 非加密 | `A50` |
+| 外盘指数 | `A50`、`HSI`、`HSTECH`、`NDX`、`SPX`、`DJI`、`NIKKEI225` |
 | crypto / 加密 Top10 白名单 | `BTC`、`ETH`、`XRP`、`BNB`、`SOL`、`DOGE`、`ADA`、`TRX`、`LINK`、`AVAX` |
+
+外盘指数按 `asset_group` 展示。指数阈值按资产组维护，例如 `A50`、`NDX`、`SPX`。
 
 crypto / 加密资产以 `asset_group × contract_bucket` 展示。当前合约桶固定为：
 
@@ -41,7 +44,7 @@ crypto / 加密资产以 `asset_group × contract_bucket` 展示。当前合约�
 | `QUARTERLY_CURRENT` | 近季 | 参与 |
 | `QUARTERLY_NEXT` | 次季 | 参与 |
 
-阈值配置中，crypto / 加密资产把交割合约桶统一映射到 `DELIVERY` 阈值组；`A50` 继续使用单组 `A50` 阈值。
+阈值配置中，crypto / 加密资产把交割合约桶统一映射到 `DELIVERY` 阈值组；外盘指数继续使用单资产组阈值。
 
 ---
 
@@ -49,11 +52,32 @@ crypto / 加密资产以 `asset_group × contract_bucket` 展示。当前合约�
 
 | 链路 | 数据源 | 降级口径 |
 |------|--------|----------|
-| A50 现货 | `yf.Ticker("XIN9.FGI")` | 依次尝试 `fast_info`、`info`、`history(period="1d")`，仍失败则跳过 A50 |
-| A50 期货 | `ak.futures_global_spot_em()` | 单个合约缺失时跳过该合约；整表失败则跳过 A50 |
+| 外盘指数现货 | `ak.index_global_spot_em()`、`ak.stock_hk_index_spot_em()`、`IB reqMktData(按资产启用)` | `IB` 资产优先尝试 provider；失败后再回退到东财 / `yf.Ticker(...)` |
+| A50 / 美股指数期货 | `ak.futures_global_spot_em()` 名称筛选 `A50`、`小型纳指当月连续`、`小型标普当月连续`、`小型道指` | 单个合约缺失时跳过该合约；整表失败或单指数缺失时尝试可用备源 |
+| 恒生指数期货 | `IB reqMktData("HSI" / "CONTFUT" / "HKFE")` | `IB` 不可用或无价格时跳过 `HSI` 本轮折溢价计算 |
+| 恒生科技指数期货 | `IB reqMktData("HSTECH" / "CONTFUT" / "HKFE")` | `IB` 不可用或无价格时跳过 `HSTECH` 本轮折溢价计算 |
+| 美股/日经指数期货备源 | `yf.Ticker("NQ=F"/"ES=F"/"YM=F"/"NKD=F")` | 期货价格缺失时跳过该指数本轮折溢价计算 |
 | crypto / 加密现货 | Gate `GET /spot/tickers` | 单个币种现货缺失则跳过该资产 |
 | crypto / 加密永续 | Gate `GET /futures/usdt/contracts` | 单个资产永续缺失只跳过 `PERP` 桶 |
 | crypto / 加密交割 | Gate `GET /delivery/usdt/contracts` | 单个资产只保留可识别的交割桶 |
+
+第一版采用“可用源优先”：没有稳定期货源的指数不会阻塞整个 premium 抓取；系统记录 warning 后继续处理其他指数和 crypto 资产。
+
+当前已可生成并写入数据库的外盘指数折溢价快照：
+
+- `HSI`: `IB` 可用时按 `IND + CONTFUT` 形成恒指折溢价快照。
+- `HSTECH`: `IB` 可用时按 `IND + CONTFUT` 形成恒生科技指数折溢价快照。
+- `A50`: 东财全球期货表中有 `CN00Y` 及部分可用月份合约。
+- `NDX`: 东财全球期货表中当前可用 `NQ00Y` 主连。
+- `SPX`: 东财全球期货表中当前可用 `ES00Y` 主连。
+- `DJI`: 东财全球期货表中当前可用 `YM00Y` 及部分月份合约，按有有效 `最新价` 的行入库；只有昨结、无最新价的远月合约跳过。
+- `NIKKEI225`: 当前期货腿使用 yfinance `NKD=F`。
+
+待探索数据源，不进入当前数据库写入范围：
+
+- 纳斯达克 100、标普 500 远月实时期货行情。
+- 恒生国企指数连续期货（当前仅验证到现货 `IND` 可解析）。
+- DAX、FTSE 等其他外盘指数期货腿。
 
 模块级 `fetch_live()` 使用 `tenacity`，当前为最多 3 次、指数退避 `2s -> 4s -> 8s`。
 
@@ -65,10 +89,10 @@ crypto / 加密资产以 `asset_group × contract_bucket` 展示。当前合约�
 
 | 字段 | 语义 |
 |------|------|
-| `asset_group` | 资产组，如 `A50`、`BTC` |
-| `contract_bucket` | 合约桶，如 `PERP`、`MONTHLY_CURRENT` |
-| `contract_type` | 原生合约类型，如 `spot`、`swap`、`future` |
-| `expiry_ts` | 到期时间，永续允许为空 |
+| `asset_group` | 资产组，如 `A50`、`NDX`、`BTC` |
+| `contract_bucket` | 合约桶，如 `INDEX`、`PERP`、`MONTHLY_CURRENT` |
+| `contract_type` | 原生合约类型，如 `swap`、`future` |
+| `expiry_ts` | 到期时间，永续或连续指数期货允许为空 |
 | `bucket_rank` | 看板排序字段 |
 | `source_exchange` | 期货腿交易所或来源 |
 | `spot_price` | 现货价格 |
@@ -76,11 +100,11 @@ crypto / 加密资产以 `asset_group × contract_bucket` 展示。当前合约�
 | `premium` | `future_price - spot_price` |
 | `premium_rate` | `premium / spot_price * 100` |
 | `state` | `contango` 或 `backwardation` |
-| `days_to_maturity` | 剩余天数，永续允许为空 |
+| `days_to_maturity` | 剩余天数，永续或连续指数期货允许为空 |
 
 唯一标识口径：
 
-- A50: `symbol = "A50:{future_symbol}"`
+- 外盘指数: `symbol = "{asset_group}:{future_symbol}"`
 - crypto / 加密资产: `symbol = "{asset_group}:{future_symbol}"`
 
 ---
@@ -106,7 +130,7 @@ crypto / 加密资产以 `asset_group × contract_bucket` 展示。当前合约�
 2. 当 `premium_rate >= upper` 时进入升水候选。
 3. 当 `premium_rate <= lower` 时进入贴水候选。
 4. 非永续合约若启用年化阈值，还必须同时满足对应年化阈值。
-5. 永续或缺少到期日时不参与年化阈值判定。
+5. 永续、连续指数期货或缺少到期日时不参与年化阈值判定。
 6. 触发倍率 `>= 1.5` 时信号级别为 `CRITICAL`，否则为 `WARNING`。
 
 年化口径：
@@ -137,6 +161,8 @@ annualized_premium_rate = premium_rate * (365 / max(days_to_maturity, 1))
 - `premium_cruise_mode`
 - `premium_watch_mode`
 
+外盘指数和 crypto / 加密资产第一版继续共享同一套 premium 模块时钟。
+
 ---
 
 ## 7. 快照表
@@ -156,7 +182,7 @@ annualized_premium_rate = premium_rate * (365 / max(days_to_maturity, 1))
 
 - 按 `symbol` 读取最新快照。
 - 若合约桶、价格、溢价、状态或剩余天数变化则写入或更新。
-- 最新快照读取会过滤非 A50 且 `contract_bucket` 为空的旧结构数据。
+- 最新快照读取会过滤非外盘指数且 `contract_bucket` 为空的旧结构数据，并只展示最近一次 premium 抓取批次窗口内的数据，避免历史旧 symbol 混入当前行情页。
 
 ---
 
@@ -164,7 +190,7 @@ annualized_premium_rate = premium_rate * (365 / max(days_to_maturity, 1))
 
 看板分为两个入口：
 
-- `A50`: 维持原有多合约展示。
+- `外盘指数`: 展示 A50、恒生、恒生科技、纳斯达克、标普、道指、日经等指数中当前可生成的折溢价快照。
 - `加密货币`: 按 Top10 crypto / 加密资产和合约桶展示。
 
 展示内容：
@@ -185,5 +211,6 @@ crypto / 加密资产表格必须保留 `资产组` 与 `合约桶`，避免把 
 
 - `tests/test_premium.py` 覆盖 fixture、阈值、年化阈值和策略触发。
 - `tests/test_snapshot_storage.py` 覆盖期现溢价快照写入和最新快照读取。
+- `tests/test_dashboard.py` 覆盖外盘指数与 crypto 的看板过滤/排序口径。
 - `tests/test_retention_and_ops.py` 覆盖期现溢价快照保留期清理。
 - dashboard 期现溢价页默认走快照读取，强制抓新成功后回写快照。

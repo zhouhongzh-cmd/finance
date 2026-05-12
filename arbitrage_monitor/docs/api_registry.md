@@ -1,8 +1,8 @@
 # API Registry
 
 > 当前基线: `docs/requirements_codex_v1.md`
-> 版本: V1.1
-> 最后更新: 2026-04-23
+> 版本: V1.2
+> 最后更新: 2026-05-05
 > 说明: 本文档只记录当前 `MVP` 已使用或已规划但明确标注状态的数据源。
 
 ---
@@ -13,6 +13,7 @@
 |------|------|----------|
 | V1.0 | 2026-03-15 | 初始版本 |
 | V1.1 | 2026-04-23 | 1. 补充期现溢价模块调度频率<br>2. 添加各条目"最后验证时间"字段 |
+| V1.2 | 2026-05-05 | 1. 将 A50 期现溢价数据源扩展为外盘指数现货/期货数据源<br>2. 标注恒指、DAX、FTSE 等期货源暂不可用限制 |
 
 ---
 
@@ -218,21 +219,21 @@
 - `最后验证时间`: 2026-04-22
 - `notes`: 当前按 `expire_time + cycle` 归类为 `MONTHLY_CURRENT`、`MONTHLY_NEXT`、`QUARTERLY_CURRENT`、`QUARTERLY_NEXT`；当前固定白名单里 `BTC/ETH/DOGE` 已验证可落到双月度 + 双季度桶，`XRP/SOL/ADA/LINK/AVAX` 至少可落到双月度桶
 
-### 1.17 A50 现货主数据源
+### 1.17 外盘指数现货主数据源
 
 - `status`: `ACTIVE`
 - `module`: `fetchers/premium_fetcher.py`
-- `name`: `yfinance.XIN9.FGI`
-- `call`: `yf.Ticker("XIN9.FGI")`
+- `name`: `akshare.index_global_spot_em / akshare.stock_hk_index_spot_em`
+- `call`: `ak.index_global_spot_em()`、`ak.stock_hk_index_spot_em()`
 - `rate_limit`: 中等
 - `latency`: 中等
-- `quality`: 中
-- `fallback`: 依次尝试 `fast_info`、`info`、`history(period="1d")`；仍失败则跳过 A50 全组
+- `quality`: 中高
+- `fallback`: 东财指数源失败后，按资产映射回退到 `yf.Ticker(...)`；仍失败则跳过该指数全组
 - `调度频率`: 巡航 5 分钟 / 盯盘 30 秒
-- `最后验证时间`: 2026-04-22
-- `notes`: 用于 A50 期现溢价监控的现货腿
+- `最后验证时间`: 2026-05-05
+- `notes`: 第一版用 `index_global_spot_em()` 覆盖 `NDX/SPX/DJIA/HSI/N225`，用 `stock_hk_index_spot_em()` 覆盖恒生专用现货；A50 现货继续保留 yfinance `XIN9.FGI`
 
-### 1.18 A50 期货主数据源
+### 1.18 外盘指数期货主数据源
 
 - `status`: `ACTIVE`
 - `module`: `fetchers/premium_fetcher.py`
@@ -241,12 +242,40 @@
 - `rate_limit`: 建议低于 `5` 次/秒
 - `latency`: 中等
 - `quality`: 中高
-- `fallback`: 单个 A50 合约缺失时跳过该合约；整表失败则跳过 A50 本轮
+- `fallback`: 单个指数期货缺失时尝试可用备源；整表失败则跳过对应指数本轮
 - `调度频率`: 巡航 5 分钟 / 盯盘 30 秒
-- `最后验证时间`: 2026-04-22
-- `notes`: 通过筛选 `名称` 含 `A50` 的全部合约构造 A50 多合约溢价对
+- `最后验证时间`: 2026-05-05
+- `notes`: 当前用于 A50、纳斯达克 100、标普 500、道指等指数期货腿；实测可匹配 `A50`、`小型纳指当月连续`、`小型标普当月连续`、`小型道指`；道指按有效最新价纳入多月份，纳指/标普远月与恒指期货仍待探索
 
-### 1.19 加密资产稳定币收益率研究台账
+### 1.19 外盘指数期货备选数据源
+
+- `status`: `ACTIVE`
+- `module`: `fetchers/premium_fetcher.py`
+- `name`: `yfinance.index_futures`
+- `call`: `yf.Ticker("NQ=F"/"ES=F"/"YM=F"/"NKD=F")`
+- `rate_limit`: 中等
+- `latency`: 中等
+- `quality`: 中
+- `fallback`: 单个期货价格缺失时跳过该指数本轮折溢价计算
+- `调度频率`: 巡航 5 分钟 / 盯盘 30 秒
+- `最后验证时间`: 2026-05-05
+- `notes`: 当前作为纳斯达克 100、标普 500、道指的备源，以及日经 225 的默认期货腿；恒指、DAX、FTSE 常见 Yahoo 期货符号当前不可用，不写入已交付能力
+
+### 1.20 外盘指数期货待探索数据源
+
+- `status`: RESEARCH_ONLY
+- `module`: `docs/research/`
+- `name`: `hkex/hsi-futures-and-us-index-deferred-contracts`
+- `call`: `TBD`
+- `rate_limit`: 待验证
+- `latency`: 待验证
+- `quality`: 待验证
+- `fallback`: 暂不接入生产代码
+- `调度频率`: 研究阶段，尚未接入调度
+- `最后验证时间`: 2026-05-05
+- `notes`: 当前待探索范围包括恒生指数期货实时行情、纳斯达克 100 与标普 500 远月实时期货行情、DAX/FTSE 等其他外盘指数期货腿
+
+### 1.21 加密资产稳定币收益率研究台账
 
 - `status`: `RESEARCH_ONLY`
 - `module`: `docs/research/crypto_cash_and_carry_research_20260418.md`
@@ -268,11 +297,17 @@
 
 ### 2.1 IB
 
-- `status`: `PLANNED`
-- `module`: `fetchers/ib_margin.py`
-- `name`: `ib_insync.IB.reqMktData`
-- `call`: `ib.reqMktData()`
-- `notes`: 等 `ib` 模块进入正式范围后再补完整约束
+- `status`: `PARTIAL_ACTIVE`
+- `module`: `providers/ib_gateway.py`、`fetchers/premium_fetcher.py`
+- `name`: `ibapi.EClient.reqContractDetails / reqMktData`
+- `call`: `reqContractDetails()`、`reqMktData()`
+- `rate_limit`: 受本机或远端 IB Gateway / TWS 会话限制
+- `latency`: 中等
+- `quality`: 中高
+- `fallback`: `premium` 外盘指数优先尝试 IB；失败后按资产回退到既有 `akshare/yfinance` 源；`HSI/HSTECH` 当前无稳定非 IB 期货源，IB 失败则跳过本轮
+- `调度频率`: 巡航 5 分钟 / 盯盘 30 秒
+- `最后验证时间`: 2026-05-11
+- `notes`: 当前 provider 同时支持 `remote` 与 `local` 双 profile。默认远端地址沿用已验证脚本 `100.99.204.61:4001`；本机地址通过 `.env` 的 `IB_LOCAL_*` 配置指定。当前正式闭环资产为 `HSI`、`HSTECH`；`NDX/SPX/DJI` 仅预留 IB contract spec，未升级为稳定验收能力。实测 `HSCEI` 现货可解析，但连续期货本轮未解析成功，暂不升级为正式能力。
 
 ### 2.2 Macro
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -17,6 +18,14 @@ LOCAL_ONLY_FIELDS = (
     "WECOM_WEBHOOK_URL",
     "JSL_COOKIE",
     "XUEQIU_COOKIE",
+    "IB_DEFAULT_PROFILE",
+    "IB_REMOTE_HOST",
+    "IB_REMOTE_PORT",
+    "IB_REMOTE_CLIENT_ID",
+    "IB_LOCAL_HOST",
+    "IB_LOCAL_PORT",
+    "IB_LOCAL_CLIENT_ID",
+    "IB_GATEWAY_TIMEOUT_SECONDS",
 )
 
 SYNCABLE_RUNTIME_FIELDS = (
@@ -132,6 +141,16 @@ class Settings(BaseSettings):
     # 外部数据鉴权
     JSL_COOKIE: str = ""
     XUEQIU_COOKIE: str = ""
+
+    # IB Gateway / TWS
+    IB_DEFAULT_PROFILE: Literal["remote", "local"] = "remote"
+    IB_REMOTE_HOST: str = "100.99.204.61"
+    IB_REMOTE_PORT: int = 4001
+    IB_REMOTE_CLIENT_ID: int = 60101
+    IB_LOCAL_HOST: str = "127.0.0.1"
+    IB_LOCAL_PORT: int = 4002
+    IB_LOCAL_CLIENT_ID: int = 60102
+    IB_GATEWAY_TIMEOUT_SECONDS: int = 15
 
     # 策略开关
     ENABLE_FUTURES_MONITOR: bool = True
