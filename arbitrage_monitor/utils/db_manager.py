@@ -16,6 +16,7 @@ from models.market_data import (
     SentimentData,
 )
 from models.signals import Signal
+from config.premium_assets import INDEX_PREMIUM_ASSETS
 
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "monitor_history.db"
@@ -32,6 +33,7 @@ class DBManager:
     _instance = None
     _lock = threading.Lock()
     SNAPSHOT_HEARTBEAT_MINUTES = 15
+    PREMIUM_LATEST_BATCH_WINDOW_MINUTES = 5
     
     def __new__(cls, db_path: str | os.PathLike[str] | None = None):
         resolved_db_path = resolve_db_path(db_path)
@@ -1141,9 +1143,11 @@ class DBManager:
         ]
 
     def get_latest_premium_snapshots(self) -> list[PremiumArbitrageData]:
+        index_assets = tuple(INDEX_PREMIUM_ASSETS)
+        index_placeholders = ",".join("?" for _ in index_assets)
         with self.get_connection() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT p.symbol, p.asset_group, p.contract_bucket, p.contract_type, p.expiry_ts,
                        p.bucket_rank, p.source_exchange, p.spot_symbol, p.spot_name, p.spot_price,
                        p.future_symbol, p.future_name, p.future_price, p.premium, p.premium_rate,
@@ -1156,11 +1160,15 @@ class DBManager:
                 ) latest
                 ON p.id = latest.max_id
                 WHERE NOT (
-                    p.asset_group <> 'A50'
+                    p.asset_group NOT IN ({index_placeholders})
                     AND COALESCE(p.contract_bucket, '') = ''
                 )
+                AND julianday(p.fetched_at) >= julianday((
+                    SELECT MAX(fetched_at) FROM premium_arbitrage_snapshot
+                )) - (? / 1440.0)
                 ORDER BY p.asset_group, p.bucket_rank, p.future_symbol
-                """
+                """,
+                (*index_assets, self.PREMIUM_LATEST_BATCH_WINDOW_MINUTES),
             ).fetchall()
         return [
             PremiumArbitrageData(

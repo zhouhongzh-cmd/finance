@@ -11,6 +11,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -56,10 +58,10 @@ def test_dashboard_table_ordering():
         return False
 
     metals_data = [
-        MetalArbitrageData(symbol="CU0:CAD", timestamp=datetime.now(), metal_symbol="CU0", metal_name="铜", benchmark_symbol="CAD", benchmark_name="LME铜3个月", benchmark_display_name="LME铜", domestic_symbol="cu0", domestic_name="沪铜主力", domestic_unit="元/吨", category="base", dom_price=1, for_price_usd=1, for_price_cny=1, exchange_rate=1, implied_rate=1, spread=1, spread_pct=1),
-        MetalArbitrageData(symbol="AU0:GC", timestamp=datetime.now(), metal_symbol="AU0", metal_name="黄金", benchmark_symbol="GC", benchmark_name="COMEX黄金", benchmark_display_name="COMEX GC", domestic_symbol="au0", domestic_name="沪金主力", domestic_unit="元/克", category="precious", dom_price=1, for_price_usd=1, for_price_cny=1, exchange_rate=1, implied_rate=1, spread=1, spread_pct=1),
-        MetalArbitrageData(symbol="AG0:SI", timestamp=datetime.now(), metal_symbol="AG0", metal_name="白银", benchmark_symbol="SI", benchmark_name="COMEX白银", benchmark_display_name="COMEX SI", domestic_symbol="ag0", domestic_name="沪银主力", domestic_unit="元/千克", category="precious", dom_price=1, for_price_usd=1, for_price_cny=1, exchange_rate=1, implied_rate=1, spread=1, spread_pct=1),
-        MetalArbitrageData(symbol="PT0:XPT", timestamp=datetime.now(), metal_symbol="PT0", metal_name="铂金", benchmark_symbol="XPT", benchmark_name="伦敦铂", benchmark_display_name="LME铂", domestic_symbol="pt0", domestic_name="沪铂主力", domestic_unit="元/克", category="precious", dom_price=1, for_price_usd=1, for_price_cny=1, exchange_rate=1, implied_rate=1, spread=1, spread_pct=1),
+        MetalArbitrageData(symbol="CU0:CAD", timestamp=datetime.now(), metal_symbol="CU0", metal_name="铜", benchmark_symbol="CAD", benchmark_name="LME铜3个月", benchmark_display_name="LME铜", domestic_symbol="cu0", domestic_name="沪铜主力", domestic_unit="元/吨", category="base", dom_price=1, for_price_usd=1, for_price_cny=1, exchange_rate=1, implied_rate=1, spread=1, spread_pct=1, for_time="22:08:51", for_date="2026-05-19"),
+        MetalArbitrageData(symbol="AU0:GC", timestamp=datetime.now(), metal_symbol="AU0", metal_name="黄金", benchmark_symbol="GC", benchmark_name="COMEX黄金", benchmark_display_name="COMEX GC", domestic_symbol="au0", domestic_name="沪金主力", domestic_unit="元/克", category="precious", dom_price=1, for_price_usd=1, for_price_cny=1, exchange_rate=1, implied_rate=1, spread=1, spread_pct=1, for_time="22:08:00", for_date="2026-05-19"),
+        MetalArbitrageData(symbol="AG0:SI", timestamp=datetime.now(), metal_symbol="AG0", metal_name="白银", benchmark_symbol="SI", benchmark_name="COMEX白银", benchmark_display_name="COMEX SI", domestic_symbol="ag0", domestic_name="沪银主力", domestic_unit="元/千克", category="precious", dom_price=1, for_price_usd=1, for_price_cny=1, exchange_rate=1, implied_rate=1, spread=1, spread_pct=1, for_time="22:07:00", for_date="2026-05-19"),
+        MetalArbitrageData(symbol="PT0:XPT", timestamp=datetime.now(), metal_symbol="PT0", metal_name="铂金", benchmark_symbol="XPT", benchmark_name="伦敦铂", benchmark_display_name="LME铂", domestic_symbol="pt0", domestic_name="沪铂主力", domestic_unit="元/克", category="precious", dom_price=1, for_price_usd=1, for_price_cny=1, exchange_rate=1, implied_rate=1, spread=1, spread_pct=1, for_time="22:06:00", for_date="2026-05-19"),
     ]
     metals_df, _ = build_metals_live_tables(metals_data, [])
     expected_metals_order = ["黄金", "白银", "铂金", "铜"]
@@ -69,14 +71,21 @@ def test_dashboard_table_ordering():
     if metals_df.columns[: len(METALS_FRONT_COLUMNS)].tolist() != METALS_FRONT_COLUMNS:
         print("❌ Dashboard Ordering: metals front columns mismatch")
         return False
+    if "国际日期" in metals_df.columns:
+        print("❌ Dashboard Ordering: 国际日期 should be merged into 国际时间")
+        return False
+    if "国际时间" not in metals_df.columns or not metals_df["国际时间"].astype(str).str.contains(" ").all():
+        print("❌ Dashboard Ordering: 国际时间 should contain merged date and time")
+        return False
 
     premium_data = [
-        PremiumArbitrageData(symbol="A50:CN00Y", timestamp=datetime.now(), asset_group="A50", spot_symbol="XIN9.FGI", spot_name="A50现货", spot_price=14529.54, future_symbol="CN00Y", future_name="A50期指当月连续", future_price=14422.0, premium=-107.54, premium_rate=-0.74, state="backwardation", contract_bucket="A50", contract_type="future", bucket_rank=10, source_exchange="A50", source_spot="fixture", source_future="fixture"),
+        PremiumArbitrageData(symbol="A50:CN00Y", timestamp=datetime.now(), asset_group="A50", spot_symbol="XIN9.FGI", spot_name="A50现货", spot_price=14529.54, future_symbol="CN00Y", future_name="A50期指当月连续", future_price=14422.0, premium=-107.54, premium_rate=-0.74, state="backwardation", contract_bucket="INDEX", contract_type="future", bucket_rank=10, source_exchange="A50", source_spot="fixture", source_future="fixture"),
+        PremiumArbitrageData(symbol="NDX:NQ=F", timestamp=datetime.now(), asset_group="NDX", spot_symbol="^NDX", spot_name="纳斯达克100现货", spot_price=27651.82, future_symbol="NQ=F", future_name="纳斯达克100连续期货", future_price=27833.0, premium=181.18, premium_rate=0.6552, state="contango", contract_bucket="INDEX", contract_type="future", bucket_rank=0, source_exchange="CME", source_spot="fixture", source_future="fixture"),
         PremiumArbitrageData(symbol="BTC:BTC_USDT", timestamp=datetime.now(), asset_group="BTC", spot_symbol="BTC_USDT", spot_name="BTC现货", spot_price=68102.59, future_symbol="BTC_USDT", future_name="BTC永续", future_price=68025.0, premium=-77.59, premium_rate=-0.11, state="backwardation", contract_bucket="PERP", contract_type="swap", bucket_rank=0, source_exchange="Gate", source_spot="fixture", source_future="fixture"),
         PremiumArbitrageData(symbol="ETH:ETH_USDT_20260626", timestamp=datetime.now(), asset_group="ETH", spot_symbol="ETH_USDT", spot_name="ETH现货", spot_price=2332.72, future_symbol="ETH_USDT_20260626", future_name="ETH近季", future_price=2350.18, premium=17.46, premium_rate=0.75, state="contango", contract_bucket="QUARTERLY_CURRENT", contract_type="future", expiry_ts="2026-06-26T00:00:00", bucket_rank=3, source_exchange="Gate", days_to_maturity=68, source_spot="fixture", source_future="fixture"),
     ]
     premium_df, _ = build_premium_live_tables(premium_data, [])
-    if premium_df["资产组"].tolist() != ["BTC", "ETH", "A50"]:
+    if premium_df["资产组"].tolist() != ["BTC", "ETH", "A50", "NDX"]:
         print(f"❌ Dashboard Ordering: unexpected premium order {premium_df['资产组'].tolist()}")
         return False
     if premium_df.columns[: len(PREMIUM_FRONT_COLUMNS)].tolist() != PREMIUM_FRONT_COLUMNS:
@@ -87,3 +96,73 @@ def test_dashboard_table_ordering():
     print("✅ Dashboard Table Ordering: OK")
     return True
 
+
+def test_premium_display_columns_are_arrow_compatible():
+    """Premium tables should keep nullable numeric columns free of string sentinels."""
+    logger.info("test_premium_display_columns_are_arrow_compatible_start")
+
+    from models.market_data import PremiumArbitrageData
+    from dashboard.tables import build_premium_live_tables
+
+    premium_data = [
+        PremiumArbitrageData(
+            symbol="BTC:BTC_USDT",
+            timestamp=datetime.now(),
+            asset_group="BTC",
+            spot_symbol="BTC_USDT",
+            spot_name="BTC现货",
+            spot_price=68102.59,
+            future_symbol="BTC_USDT",
+            future_name="BTC永续",
+            future_price=68025.0,
+            premium=-77.59,
+            premium_rate=-0.11,
+            state="backwardation",
+            contract_bucket="PERP",
+            contract_type="swap",
+            bucket_rank=0,
+            source_exchange="Gate",
+            source_spot="fixture",
+            source_future="fixture",
+        ),
+        PremiumArbitrageData(
+            symbol="ETH:ETH_USDT_20260626",
+            timestamp=datetime.now(),
+            asset_group="ETH",
+            spot_symbol="ETH_USDT",
+            spot_name="ETH现货",
+            spot_price=2332.72,
+            future_symbol="ETH_USDT_20260626",
+            future_name="ETH近季",
+            future_price=2350.18,
+            premium=17.46,
+            premium_rate=0.75,
+            state="contango",
+            contract_bucket="QUARTERLY_CURRENT",
+            contract_type="future",
+            expiry_ts="2026-06-26T00:00:00",
+            bucket_rank=3,
+            source_exchange="Gate",
+            days_to_maturity=68,
+            source_spot="fixture",
+            source_future="fixture",
+        ),
+    ]
+
+    premium_df, _ = build_premium_live_tables(premium_data, [])
+    if not pd.api.types.is_float_dtype(premium_df["年化溢价率(%)"]):
+        print(f"❌ Premium dtype: 年化溢价率(%) is {premium_df['年化溢价率(%)'].dtype}")
+        return False
+    if str(premium_df["剩余天数"].dtype) != "Int64":
+        print(f"❌ Premium dtype: 剩余天数 is {premium_df['剩余天数'].dtype}")
+        return False
+    if premium_df["年化溢价率(%)"].isna().sum() != 1:
+        print("❌ Premium dtype: expected one missing annualized premium value")
+        return False
+    if premium_df["剩余天数"].isna().sum() != 1:
+        print("❌ Premium dtype: expected one missing days_to_maturity value")
+        return False
+
+    logger.info("premium_display_columns_are_arrow_compatible_ok")
+    print("✅ Premium Display Columns: Arrow-compatible")
+    return True

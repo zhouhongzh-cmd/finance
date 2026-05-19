@@ -18,6 +18,7 @@ from typing import Callable
 import pandas as pd
 import streamlit as st
 
+from config.premium_assets import INDEX_PREMIUM_ASSETS
 from config.settings import settings
 from fetchers.ak_convertible import convertible_fetcher
 from fetchers.ak_futures import futures_fetcher
@@ -35,6 +36,7 @@ from dashboard.tables import (
     build_metals_live_tables,
     build_premium_live_tables,
     build_sentiment_live_tables,
+    normalize_premium_display_df,
 )
 from utils.db_manager import DBManager
 
@@ -47,6 +49,7 @@ st.set_page_config(
 )
 
 db_manager = DBManager()
+INDEX_PREMIUM_ASSET_GROUPS = tuple(INDEX_PREMIUM_ASSETS)
 SNAPSHOT_STALE_WINDOWS = {
     "futures": min(
         settings.FUTURES_CRUISE_INTERVAL_MINUTES * 60,
@@ -289,19 +292,21 @@ def fetch_recent_premium_snapshot_history(limit: int = 200) -> pd.DataFrame:
     return df
 
 
-def filter_premium_table(df: pd.DataFrame, *, a50_only: bool) -> pd.DataFrame:
+def filter_premium_table(df: pd.DataFrame, *, index_only: bool) -> pd.DataFrame:
     if df.empty or "资产组" not in df.columns:
         return df
-    if a50_only:
-        return df[df["资产组"] == "A50"].copy()
-    return df[df["资产组"] != "A50"].copy()
+    mask = df["资产组"].astype(str).isin(INDEX_PREMIUM_ASSET_GROUPS)
+    if index_only:
+        return df[mask].copy()
+    return df[~mask].copy()
 
 
-def filter_premium_signal_table(df: pd.DataFrame, *, a50_only: bool) -> pd.DataFrame:
+def filter_premium_signal_table(df: pd.DataFrame, *, index_only: bool) -> pd.DataFrame:
     if df.empty or "标的" not in df.columns:
         return df
-    mask = df["标的"].astype(str).str.startswith("A50 ")
-    return df[mask].copy() if a50_only else df[~mask].copy()
+    prefixes = tuple(f"{asset_group} " for asset_group in INDEX_PREMIUM_ASSET_GROUPS)
+    mask = df["标的"].astype(str).str.startswith(prefixes)
+    return df[mask].copy() if index_only else df[~mask].copy()
 
 
 def prepare_premium_history_table(df: pd.DataFrame) -> pd.DataFrame:
@@ -313,17 +318,26 @@ def prepare_premium_history_table(df: pd.DataFrame) -> pd.DataFrame:
             lambda row: (
                 round(row["premium_rate"] * (365 / max(int(row["days_to_maturity"]), 1)), 4)
                 if pd.notna(row["days_to_maturity"])
-                else "N/A"
+                else None
             ),
             axis=1,
         )
         history_df["annualized_premium_rate"] = annualized_series
+    if "annualized_premium_rate" in history_df.columns:
+        history_df["annualized_premium_rate"] = pd.to_numeric(
+            history_df["annualized_premium_rate"], errors="coerce"
+        )
+    if "days_to_maturity" in history_df.columns:
+        history_df["days_to_maturity"] = pd.array(
+            pd.to_numeric(history_df["days_to_maturity"], errors="coerce"),
+            dtype="Int64",
+        )
     if "state" in history_df.columns:
         history_df["direction"] = history_df["state"].map(
             {"contango": "升水", "backwardation": "贴水"}
         ).fillna(history_df["state"])
     history_df["fetched_at"] = history_df["fetched_at"].dt.strftime("%Y-%m-%d %H:%M:%S")
-    return history_df
+    return normalize_premium_display_df(history_df)
 
 
 @st.cache_data(ttl=30)
@@ -586,7 +600,7 @@ sidebar.caption("各模块阈值与时钟都在“参数设置”页。")
 
 view = st.radio(
     "模块",
-    ["中金所股指", "可转债", "舆情热度", "金属套利", "A50", "加密货币", "报警记录", "系统状态", "软件说明"],
+    ["中金所股指", "可转债", "舆情热度", "金属套利", "外盘指数", "加密货币", "报警记录", "系统状态", "软件说明"],
     horizontal=True,
     label_visibility="collapsed",
 )
@@ -775,8 +789,8 @@ elif view == "金属套利":
         )
         st.dataframe(history_df, width="stretch", hide_index=True)
 
-elif view in {"A50", "加密货币"}:
-    a50_only = view == "A50"
+elif view in {"外盘指数", "加密货币"}:
+    index_only = view == "外盘指数"
     left, mid, right = st.columns([1, 1.2, 4.8])
     refresh_snapshot = False
     force_refresh = False
@@ -788,10 +802,10 @@ elif view in {"A50", "加密货币"}:
         st.markdown(f"#### {view}")
 
     if hasattr(st, "page_link"):
-        target_label = "去调整 A50 阈值和模块时钟" if a50_only else "去调整加密货币阈值和模块时钟"
+        target_label = "去调整外盘指数阈值和模块时钟" if index_only else "去调整加密货币阈值和模块时钟"
         st.page_link("pages/1_参数设置.py", label=target_label, icon="⚙️")
-    if a50_only:
-        st.caption("A50 维持原有多合约展示，继续复用 premium 模块的抓取与快照链路。")
+    if index_only:
+        st.caption("外盘指数复用 premium 模块的抓取、阈值、调度与快照链路；缺期货源的指数本轮不生成折溢价快照。")
     else:
         st.caption("加密资产池按 Top10 币种展示永续、当月、次月、近季、次季可用行情。")
 
@@ -811,10 +825,10 @@ elif view in {"A50", "加密货币"}:
             )
 
     render_snapshot_meta("premium", premium_fetched_at, premium_source, "premium_live")
-    premium_df = filter_premium_table(premium_df, a50_only=a50_only)
-    premium_signal_df = filter_premium_signal_table(premium_signal_df, a50_only=a50_only)
+    premium_df = filter_premium_table(premium_df, index_only=index_only)
+    premium_signal_df = filter_premium_signal_table(premium_signal_df, index_only=index_only)
 
-    if not premium_df.empty and not a50_only:
+    if not premium_df.empty and not index_only:
         asset_filter = st.multiselect(
             "资产组筛选",
             options=sorted(premium_df["资产组"].unique().tolist()),
@@ -843,9 +857,8 @@ elif view in {"A50", "加密货币"}:
     history_limit = st.slider("历史快照条数", 20, 500, 100, 20, key=f"premium_history_limit_{view}")
     history_df = fetch_recent_premium_snapshot_history(limit=history_limit)
     history_df = prepare_premium_history_table(history_df)
-    history_df = history_df[
-        history_df["asset_group"].eq("A50") if a50_only else history_df["asset_group"].ne("A50")
-    ].copy()
+    history_mask = history_df["asset_group"].astype(str).isin(INDEX_PREMIUM_ASSET_GROUPS)
+    history_df = history_df[history_mask if index_only else ~history_mask].copy()
     if history_df.empty:
         st.info(f"暂无{view}快照历史")
     else:
@@ -949,7 +962,7 @@ elif view == "软件说明":
 - `可转债`：展示实时转债候选与当前触发信号
 - `舆情热度`：展示实时榜单与风险信号
 - `金属套利`：展示国内外金属套利对、触发信号和快照历史
-- `A50 以及加密货币`：展示 A50 多合约与 Top10 加密资产池的期现溢价对、触发信号和快照历史
+- `外盘指数 以及 加密货币`：展示外盘指数与 Top10 加密资产池的期现溢价对、触发信号和快照历史
 - `报警记录`：展示历史报警与今日汇总
 - `系统状态`：展示数据库、保证金快照、期指/金属/溢价快照、最新信号
         """

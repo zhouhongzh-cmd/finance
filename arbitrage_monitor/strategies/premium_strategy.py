@@ -5,6 +5,7 @@ from typing import List
 from models.market_data import PremiumArbitrageData
 from models.signals import Signal
 from strategies.base import BaseStrategy
+from config.premium_assets import is_index_premium_asset
 from config.premium_thresholds import CONTRACT_BUCKET_LABELS, get_effective_premium_threshold
 
 
@@ -84,9 +85,9 @@ class PremiumArbitrageStrategy(BaseStrategy):
             level = "CRITICAL" if severity_ratio >= 1.5 else "WARNING"
             bucket_label = CONTRACT_BUCKET_LABELS.get(item.contract_bucket, item.contract_bucket or "多合约")
             asset_label = (
-                f"{item.asset_group} {bucket_label} {item.future_symbol}".strip()
-                if item.asset_group != "A50"
-                else f"A50 {item.future_name or item.future_symbol}"
+                f"{item.asset_group} {item.future_name or item.future_symbol}"
+                if is_index_premium_asset(item.asset_group)
+                else f"{item.asset_group} {bucket_label} {item.future_symbol}".strip()
             )
             annualized_display = (
                 f"{annualized_display_value:.2f}%"

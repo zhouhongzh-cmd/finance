@@ -6,6 +6,12 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from config.premium_assets import (
+    CRYPTO_PREMIUM_ASSETS,
+    INDEX_PREMIUM_ASSETS,
+    PREMIUM_ASSETS,
+)
+
 
 CONTRACT_BUCKETS: list[str] = [
     "PERP",
@@ -15,6 +21,7 @@ CONTRACT_BUCKETS: list[str] = [
     "QUARTERLY_NEXT",
 ]
 CONTRACT_BUCKET_LABELS: dict[str, str] = {
+    "INDEX": "指数期货",
     "PERP": "永续",
     "MONTHLY_CURRENT": "当月",
     "MONTHLY_NEXT": "次月",
@@ -36,25 +43,7 @@ THRESHOLD_BUCKET_LABELS: dict[str, str] = {
     "DELIVERY": "交割合约共用",
 }
 
-CRYPTO_PREMIUM_ASSETS: dict[str, str] = {
-    "BTC": "比特币",
-    "ETH": "以太坊",
-    "XRP": "瑞波币",
-    "BNB": "币安币",
-    "SOL": "索拉纳",
-    "DOGE": "狗狗币",
-    "ADA": "艾达币",
-    "TRX": "波场",
-    "LINK": "Chainlink",
-    "AVAX": "Avalanche",
-}
-NON_CRYPTO_PREMIUM_ASSETS: dict[str, str] = {
-    "A50": "富时中国A50",
-}
-PREMIUM_ASSETS: dict[str, str] = {
-    **CRYPTO_PREMIUM_ASSETS,
-    **NON_CRYPTO_PREMIUM_ASSETS,
-}
+NON_CRYPTO_PREMIUM_ASSETS: dict[str, str] = INDEX_PREMIUM_ASSETS
 
 
 def _default_threshold_values() -> dict[str, float | bool]:
@@ -71,7 +60,8 @@ def _default_threshold_values() -> dict[str, float | bool]:
 
 
 DEFAULT_PREMIUM_THRESHOLDS: dict[str, dict[str, float | bool]] = {
-    "A50": _default_threshold_values(),
+    asset_group: _default_threshold_values()
+    for asset_group in INDEX_PREMIUM_ASSETS
 }
 for asset_group in CRYPTO_PREMIUM_ASSETS:
     for bucket in THRESHOLD_BUCKETS:
@@ -387,17 +377,18 @@ def get_premium_config_rows() -> list[dict[str, Any]]:
     thresholds = load_premium_thresholds()
     rows: list[dict[str, Any]] = []
 
-    rows.append(
-        {
-            "threshold_key": "A50",
-            "asset_group": "A50",
-            "contract_bucket": "",
-            "bucket_label": "多合约",
-            "name": PREMIUM_ASSETS["A50"],
-            "market": "A50",
-            **thresholds["A50"],
-        }
-    )
+    for asset_group, name in INDEX_PREMIUM_ASSETS.items():
+        rows.append(
+            {
+                "threshold_key": asset_group,
+                "asset_group": asset_group,
+                "contract_bucket": "",
+                "bucket_label": "指数期货",
+                "name": name,
+                "market": "INDEX",
+                **thresholds[asset_group],
+            }
+        )
 
     for asset_group, name in CRYPTO_PREMIUM_ASSETS.items():
         for bucket in THRESHOLD_BUCKETS:

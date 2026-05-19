@@ -13,7 +13,12 @@ from models.market_data import (
     SentimentData,
 )
 from models.signals import Signal
-from config.premium_thresholds import CONTRACT_BUCKET_LABELS, CRYPTO_PREMIUM_ASSETS
+from config.premium_assets import (
+    CRYPTO_PREMIUM_ASSETS,
+    INDEX_PREMIUM_ASSETS,
+    is_index_premium_asset,
+)
+from config.premium_thresholds import CONTRACT_BUCKET_LABELS
 
 
 FUTURES_PRODUCT_ORDER = {"IH": 0, "IF": 1, "IC": 2, "IM": 3}
@@ -51,7 +56,10 @@ METALS_FRONT_COLUMNS = [
 
 PREMIUM_GROUP_ORDER = {
     **{asset_group: index for index, asset_group in enumerate(CRYPTO_PREMIUM_ASSETS)},
-    "A50": 999,
+    **{
+        asset_group: 100 + index
+        for index, asset_group in enumerate(INDEX_PREMIUM_ASSETS)
+    },
 }
 PREMIUM_FRONT_COLUMNS = [
     "资产组",
@@ -72,6 +80,9 @@ PREMIUM_FRONT_COLUMNS = [
 CONVERTIBLE_FRONT_COLUMNS = ["名称", "时间", "现价", "溢价率", "双低", "税前YTM"]
 SENTIMENT_FRONT_COLUMNS = ["股票名称", "代码", "时间", "排行", "热度值", "情绪脉冲"]
 
+PREMIUM_NULLABLE_FLOAT_COLUMNS = ("年化溢价率(%)",)
+PREMIUM_NULLABLE_INT_COLUMNS = ("剩余天数",)
+
 
 def level_badge(level: str) -> str:
     return {
@@ -79,6 +90,24 @@ def level_badge(level: str) -> str:
         "WARNING": "🟡 WARNING",
         "CRITICAL": "🔴 CRITICAL",
     }.get(level, level)
+
+
+def normalize_premium_display_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep premium numeric display columns Arrow-compatible for Streamlit."""
+    if df.empty:
+        return df
+
+    normalized = df.copy()
+    for column in PREMIUM_NULLABLE_FLOAT_COLUMNS:
+        if column in normalized.columns:
+            normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
+    for column in PREMIUM_NULLABLE_INT_COLUMNS:
+        if column in normalized.columns:
+            normalized[column] = pd.array(
+                pd.to_numeric(normalized[column], errors="coerce"),
+                dtype="Int64",
+            )
+    return normalized
 
 
 def build_futures_live_tables(
@@ -145,6 +174,9 @@ def build_metals_live_tables(
     rows = []
     for item in data:
         asset = f"{item.metal_name} vs {item.benchmark_display_name}"
+        foreign_timestamp = " ".join(
+            part for part in (item.for_date, item.for_time) if part
+        )
         rows.append(
             {
                 "品种名称": item.metal_name,
@@ -159,8 +191,7 @@ def build_metals_live_tables(
                 "汇率": round(item.exchange_rate, 4),
                 "隐含汇率": round(item.implied_rate, 4),
                 "国内时间": item.dom_time,
-                "国际时间": item.for_time,
-                "国际日期": item.for_date,
+                "国际时间": foreign_timestamp,
                 "人民币报价": "API" if item.used_api_cny_quote else "汇率换算",
                 "信号": signal_map.get(asset, ""),
                 "_symbol_order": METALS_SYMBOL_ORDER.get(item.metal_symbol, 999),
@@ -195,9 +226,9 @@ def build_premium_live_tables(
     for item in data:
         bucket_label = CONTRACT_BUCKET_LABELS.get(item.contract_bucket, item.contract_bucket or "多合约")
         asset = (
-            f"{item.asset_group} {bucket_label} {item.future_symbol}".strip()
-            if item.asset_group != "A50"
-            else f"A50 {item.future_name or item.future_symbol}"
+            f"{item.asset_group} {item.future_name or item.future_symbol}"
+            if is_index_premium_asset(item.asset_group)
+            else f"{item.asset_group} {bucket_label} {item.future_symbol}".strip()
         )
         annualized = (
             item.premium_rate * (365 / max(item.days_to_maturity, 1))
@@ -208,8 +239,8 @@ def build_premium_live_tables(
             {
                 "资产组": item.asset_group,
                 "合约桶": bucket_label,
-                "合约类型": item.contract_type or ("future" if item.asset_group == "A50" else ""),
-                "市场": "加密货币" if item.asset_group != "A50" else "A50",
+                "合约类型": item.contract_type or ("future" if is_index_premium_asset(item.asset_group) else ""),
+                "市场": "外盘指数" if is_index_premium_asset(item.asset_group) else "加密货币",
                 "现货代码": item.spot_symbol,
                 "现货名称": item.spot_name,
                 "现货价格": round(item.spot_price, 4),
@@ -218,8 +249,8 @@ def build_premium_live_tables(
                 "期货价格": round(item.future_price, 4),
                 "溢价值": round(item.premium, 4),
                 "溢价率(%)": round(item.premium_rate, 4),
-                "年化溢价率(%)": round(annualized, 4) if annualized is not None else "N/A",
-                "剩余天数": item.days_to_maturity if item.days_to_maturity is not None else "N/A",
+                "年化溢价率(%)": round(annualized, 4) if annualized is not None else None,
+                "剩余天数": item.days_to_maturity if item.days_to_maturity is not None else None,
                 "状态": "升水" if item.state == "contango" else "贴水",
                 "来源交易所": item.source_exchange or "N/A",
                 "到期时间": item.expiry_ts or "N/A",
@@ -255,6 +286,7 @@ def build_premium_live_tables(
     )
     remaining_columns = [col for col in df.columns if col not in PREMIUM_FRONT_COLUMNS]
     df = df[PREMIUM_FRONT_COLUMNS + remaining_columns]
+    df = normalize_premium_display_df(df)
     return df, pd.DataFrame(signal_rows)
 
 

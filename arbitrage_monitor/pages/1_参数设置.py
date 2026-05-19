@@ -21,8 +21,8 @@ from config.metals_thresholds import (
     reset_metals_thresholds,
     save_metals_thresholds,
 )
+from config.premium_assets import CRYPTO_PREMIUM_ASSETS, INDEX_PREMIUM_ASSETS
 from config.premium_thresholds import (
-    CRYPTO_PREMIUM_ASSETS,
     DEFAULT_PREMIUM_THRESHOLDS,
     get_premium_config_rows,
     save_premium_thresholds,
@@ -688,44 +688,47 @@ with st.expander("股指期货", expanded=True):
 
 premium_rows = get_premium_config_rows()
 premium_before = flatten_premium_threshold_values(premium_rows)
-a50_rows = [row for row in premium_rows if row["market"] == "A50"]
+index_rows = [row for row in premium_rows if row["market"] == "INDEX"]
 crypto_rows = [row for row in premium_rows if row["market"] == "CRYPTO"]
-a50_threshold_keys = [str(row["threshold_key"]) for row in a50_rows]
+index_threshold_keys = [str(row["threshold_key"]) for row in index_rows]
 crypto_threshold_keys = [str(row["threshold_key"]) for row in crypto_rows]
+index_threshold_prefixes = tuple(
+    f"PREMIUM_THRESHOLD.{asset_group}" for asset_group in INDEX_PREMIUM_ASSETS
+)
 crypto_threshold_prefixes = tuple(
     f"PREMIUM_THRESHOLD.{asset_group}_" for asset_group in CRYPTO_PREMIUM_ASSETS
 )
 
 
-with st.expander("A50", expanded=False):
-    st.caption("A50 区块内直接维护运行时和阈值。运行时仍对应同一套 premium 模块字段，不会拆成第二套任务。")
-    with st.form("premium_a50_form"):
+with st.expander("外盘指数", expanded=False):
+    st.caption("外盘指数区块内直接维护运行时和阈值。运行时仍对应同一套 premium 模块字段，不会拆成第二套任务。")
+    with st.form("premium_index_form"):
         enable_premium, enable_premium_cruise, enable_premium_watch = render_module_switches(
-            key_prefix="premium_a50",
-            enable_label="启用 A50 监控",
+            key_prefix="premium_index",
+            enable_label="启用外盘指数监控",
             enable_value=bool(current["ENABLE_PREMIUM_MONITOR"]),
             cruise_value=bool(current["ENABLE_PREMIUM_CRUISE"]),
             watch_value=bool(current["ENABLE_PREMIUM_WATCH"]),
         )
         premium_cruise, premium_watch = render_dual_interval_inputs(
-            key_prefix="premium_a50",
+            key_prefix="premium_index",
             cruise_value=int(current["PREMIUM_CRUISE_INTERVAL_MINUTES"]),
             watch_value=int(current["PREMIUM_WATCH_INTERVAL_SECONDS"]),
         )
 
-        premium_windows = render_time_window("PREMIUM", current, key_prefix="PREMIUM_A50")
+        premium_windows = render_time_window("PREMIUM", current, key_prefix="PREMIUM_INDEX")
 
-        st.markdown("**A50 阈值**")
+        st.markdown("**外盘指数阈值**")
         premium_threshold_updates = render_premium_threshold_rows(
-            rows=a50_rows,
+            rows=index_rows,
             all_rows=premium_rows,
-            key_prefix="premium_a50",
+            key_prefix="premium_index",
             include_asset_columns=False,
         )
 
-        save_premium_a50 = st.form_submit_button("保存 A50 设置", use_container_width=True)
+        save_premium_index = st.form_submit_button("保存外盘指数设置", use_container_width=True)
 
-    if save_premium_a50:
+    if save_premium_index:
         premium_runtime_updates = {
             "ENABLE_PREMIUM_MONITOR": enable_premium,
             "ENABLE_PREMIUM_CRUISE": enable_premium_cruise,
@@ -738,7 +741,7 @@ with st.expander("A50", expanded=False):
             save_runtime_module(
                 premium_runtime_updates,
                 PREMIUM_RUNTIME_FIELDS,
-                success_text="A50 运行配置",
+                success_text="外盘指数运行配置",
             )
             path = save_premium_thresholds(premium_threshold_updates)
             after_rows = get_premium_config_rows()
@@ -748,13 +751,13 @@ with st.expander("A50", expanded=False):
                 source="dashboard_gui",
                 destination="local_override" if path.name.endswith(".local.json") else "shared_baseline",
             )
-            st.success(f"A50 阈值已保存到 {path.name}。")
+            st.success(f"外盘指数阈值已保存到 {path.name}。")
         except Exception as exc:
-            st.error(f"保存 A50 设置失败：{exc}")
+            st.error(f"保存外盘指数设置失败：{exc}")
 
-    if st.button("恢复 A50 阈值默认值", key="reset_premium_a50", use_container_width=True):
+    if st.button("恢复外盘指数阈值默认值", key="reset_premium_index", use_container_width=True):
         try:
-            reset_premium_threshold_group(a50_threshold_keys)
+            reset_premium_threshold_group(index_threshold_keys)
             after_rows = get_premium_config_rows()
             record_config_changes(
                 premium_before,
@@ -762,12 +765,12 @@ with st.expander("A50", expanded=False):
                 source="dashboard_gui",
                 destination="local_override",
             )
-            st.success("A50 阈值已恢复为默认值。")
+            st.success("外盘指数阈值已恢复为默认值。")
         except Exception as exc:
-            st.error(f"恢复 A50 阈值失败：{exc}")
+            st.error(f"恢复外盘指数阈值失败：{exc}")
 
     st.markdown("**最近变更**")
-    render_history_table(prefixes=("ENABLE_PREMIUM_", "PREMIUM_", "PREMIUM_THRESHOLD.A50"))
+    render_history_table(prefixes=("ENABLE_PREMIUM_", "PREMIUM_", *index_threshold_prefixes))
 
 
 with st.expander("加密货币", expanded=False):

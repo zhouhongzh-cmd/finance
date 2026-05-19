@@ -62,8 +62,8 @@ def test_fetchers_mock():
     logger.info("premium_mock_loaded", count=len(premium_data))
     print(f"✅ Premium Fetcher (Mock): {len(premium_data)} records")
 
-    if len(premium_data) != 4:
-        print(f"❌ Fetchers Mock: expected 4 valid premium rows, got {len(premium_data)}")
+    if len(premium_data) != 5:
+        print(f"❌ Fetchers Mock: expected 5 valid premium rows, got {len(premium_data)}")
         return False
 
     return True
@@ -321,4 +321,3 @@ def test_threshold_enable_switches():
     logger.info("threshold_enable_switches_ok")
     print("✅ Threshold Enable Switches: OK")
     return True
-
