@@ -9,6 +9,7 @@ services:
       - ./.env:/app/.env:ro
     environment:
       - PYTHONUNBUFFERED=1
+      - TZ=Asia/Shanghai
     networks:
       - monitor_net
     healthcheck:
@@ -28,6 +29,8 @@ services:
       - ./config:/app/config
       - ./data:/app/data
       - ./.env:/app/.env:ro
+    environment:
+      - TZ=Asia/Shanghai
     command: ["streamlit", "run", "app_dashboard.py", "--server.address", "0.0.0.0", "--server.port", "8501"]
     depends_on:
       - arbitrage_monitor
