@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
+from tenacity import retry, stop_after_attempt, wait_exponential
+
 from config.settings import settings
 from utils.logger import logger
 
@@ -444,6 +446,7 @@ class IBGatewayProvider:
             future=resolved.get(future_spec.key),
         )
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     def _run_with_session(self, params: IBConnectionParams, callback: Callable[[Any], None]) -> None:
         session = self._create_session(params)
         try:
