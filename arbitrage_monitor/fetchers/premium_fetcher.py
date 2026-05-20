@@ -60,73 +60,66 @@ class PremiumFetcher:
     def __init__(self, *, ib_provider=ib_gateway_provider):
         self.ib_provider = ib_provider
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     def _fetch_akshare_global_index_price(
         self,
         symbol: str,
         asset_group: str,
     ) -> tuple[float | None, str]:
-        try:
-            with source_health_context("premium_index_spot_akshare_global"):
-                df = ak.index_global_spot_em()
-            matched = df[df["代码"].astype(str).str.upper() == symbol.upper()]
-            if matched.empty:
-                logger.warning(
-                    "premium_index_global_spot_missing",
-                    asset_group=asset_group,
-                    spot_symbol=symbol,
-                )
-                return None, ""
-            price = matched.iloc[0].get("最新价")
-            if price in ("", None) or pd.isna(price):
-                return None, ""
-            return float(price), "akshare.index_global_spot_em"
-        except Exception as exc:
+        with source_health_context("premium_index_spot_akshare_global"):
+            df = ak.index_global_spot_em()
+        matched = df[df["代码"].astype(str).str.upper() == symbol.upper()]
+        if matched.empty:
             logger.warning(
-                "premium_index_global_spot_fetch_failed",
+                "premium_index_global_spot_missing",
                 asset_group=asset_group,
                 spot_symbol=symbol,
-                error=str(exc),
             )
-        return None, ""
+            return None, ""
+        price = matched.iloc[0].get("最新价")
+        if price in ("", None) or pd.isna(price):
+            return None, ""
+        return float(price), "akshare.index_global_spot_em"
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     def _fetch_akshare_hk_index_price(
         self,
         symbol: str,
         asset_group: str,
     ) -> tuple[float | None, str]:
-        try:
-            with source_health_context("premium_index_spot_akshare_hk"):
-                df = ak.stock_hk_index_spot_em()
-            matched = df[df["代码"].astype(str).str.upper() == symbol.upper()]
-            if matched.empty:
-                logger.warning(
-                    "premium_index_hk_spot_missing",
-                    asset_group=asset_group,
-                    spot_symbol=symbol,
-                )
-                return None, ""
-            price = matched.iloc[0].get("最新价")
-            if price in ("", None) or pd.isna(price):
-                return None, ""
-            return float(price), "akshare.stock_hk_index_spot_em"
-        except Exception as exc:
+        with source_health_context("premium_index_spot_akshare_hk"):
+            df = ak.stock_hk_index_spot_em()
+        matched = df[df["代码"].astype(str).str.upper() == symbol.upper()]
+        if matched.empty:
             logger.warning(
-                "premium_index_hk_spot_fetch_failed",
+                "premium_index_hk_spot_missing",
                 asset_group=asset_group,
                 spot_symbol=symbol,
-                error=str(exc),
             )
-        return None, ""
+            return None, ""
+        price = matched.iloc[0].get("最新价")
+        if price in ("", None) or pd.isna(price):
+            return None, ""
+        return float(price), "akshare.stock_hk_index_spot_em"
 
     def _fetch_index_spot_price(
         self,
         asset_config: IndexPremiumAsset,
     ) -> tuple[float | None, str]:
         if asset_config.spot_source == "akshare_global_index":
-            price, source = self._fetch_akshare_global_index_price(
-                asset_config.spot_symbol,
-                asset_config.asset_group,
-            )
+            try:
+                price, source = self._fetch_akshare_global_index_price(
+                    asset_config.spot_symbol,
+                    asset_config.asset_group,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "premium_index_global_spot_fetch_failed",
+                    asset_group=asset_config.asset_group,
+                    spot_symbol=asset_config.spot_symbol,
+                    error=str(exc),
+                )
+                price, source = None, ""
             if price is not None:
                 return price, source
 
@@ -142,10 +135,19 @@ class PremiumFetcher:
             )
 
         if asset_config.spot_source == "akshare_hk_index":
-            price, source = self._fetch_akshare_hk_index_price(
-                asset_config.spot_symbol,
-                asset_config.asset_group,
-            )
+            try:
+                price, source = self._fetch_akshare_hk_index_price(
+                    asset_config.spot_symbol,
+                    asset_config.asset_group,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "premium_index_hk_spot_fetch_failed",
+                    asset_group=asset_config.asset_group,
+                    spot_symbol=asset_config.spot_symbol,
+                    error=str(exc),
+                )
+                price, source = None, ""
             if price is not None:
                 return price, source
             return self._fetch_yfinance_price(
@@ -267,6 +269,7 @@ class PremiumFetcher:
             source_future=source_future,
         )
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     def _build_akshare_index_snapshots(
         self,
         asset_config: IndexPremiumAsset,
@@ -274,63 +277,56 @@ class PremiumFetcher:
         spot_source: str,
     ) -> list[PremiumArbitrageData]:
         results: list[PremiumArbitrageData] = []
-        try:
-            with source_health_context("premium_index_futures_akshare"):
-                df = ak.futures_global_spot_em()
-            keyword = asset_config.akshare_name_keyword or asset_config.name
-            mask = df["名称"].astype(str).str.contains(keyword, case=False, na=False)
-            index_futures = df[mask].copy()
-            for _, row in index_futures.iterrows():
-                try:
-                    raw_price = row.get("最新价") or row.get("last_price")
-                    if raw_price in ("", None) or pd.isna(raw_price):
-                        continue
-                    future_price = float(raw_price)
-                    future_symbol = str(row.get("代码") or row.get("symbol") or "").strip()
-                    future_name = str(row.get("名称") or row.get("name") or future_symbol).strip()
-                    if not future_symbol:
-                        future_symbol = future_name
-                    results.append(
-                        self._build_snapshot(
-                            asset_group=asset_config.asset_group,
-                            spot_symbol=asset_config.spot_symbol,
-                            spot_name=asset_config.spot_name,
-                            spot_price=float(spot_price),
-                            future_symbol=future_symbol,
-                            future_name=future_name,
-                            future_price=future_price,
-                            contract_bucket="INDEX",
-                            contract_type="future",
-                            expiry_ts="",
-                            bucket_rank=(
-                                0
-                                if future_symbol == "CN00Y"
-                                else asset_config.bucket_rank
-                                if asset_config.asset_group != "A50"
-                                else 10
-                            ),
-                            source_exchange=asset_config.source_exchange,
-                            days_to_maturity=(
-                                self._estimate_a50_days_to_maturity(future_symbol)
-                                if asset_config.asset_group == "A50"
-                                else None
-                            ),
-                            source_spot=spot_source,
-                            source_future="akshare.futures_global_spot_em",
-                        )
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "premium_index_future_parse_failed",
+        with source_health_context("premium_index_futures_akshare"):
+            df = ak.futures_global_spot_em()
+        keyword = asset_config.akshare_name_keyword or asset_config.name
+        mask = df["名称"].astype(str).str.contains(keyword, case=False, na=False)
+        index_futures = df[mask].copy()
+        for _, row in index_futures.iterrows():
+            try:
+                raw_price = row.get("最新价") or row.get("last_price")
+                if raw_price in ("", None) or pd.isna(raw_price):
+                    continue
+                future_price = float(raw_price)
+                future_symbol = str(row.get("代码") or row.get("symbol") or "").strip()
+                future_name = str(row.get("名称") or row.get("name") or future_symbol).strip()
+                if not future_symbol:
+                    future_symbol = future_name
+                results.append(
+                    self._build_snapshot(
                         asset_group=asset_config.asset_group,
-                        error=str(exc),
+                        spot_symbol=asset_config.spot_symbol,
+                        spot_name=asset_config.spot_name,
+                        spot_price=float(spot_price),
+                        future_symbol=future_symbol,
+                        future_name=future_name,
+                        future_price=future_price,
+                        contract_bucket="INDEX",
+                        contract_type="future",
+                        expiry_ts="",
+                        bucket_rank=(
+                            0
+                            if future_symbol == "CN00Y"
+                            else asset_config.bucket_rank
+                            if asset_config.asset_group != "A50"
+                            else 10
+                        ),
+                        source_exchange=asset_config.source_exchange,
+                        days_to_maturity=(
+                            self._estimate_a50_days_to_maturity(future_symbol)
+                            if asset_config.asset_group == "A50"
+                            else None
+                        ),
+                        source_spot=spot_source,
+                        source_future="akshare.futures_global_spot_em",
                     )
-        except Exception as exc:
-            logger.warning(
-                "premium_index_futures_fetch_failed",
-                asset_group=asset_config.asset_group,
-                error=str(exc),
-            )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "premium_index_future_parse_failed",
+                    asset_group=asset_config.asset_group,
+                    error=str(exc),
+                )
         return results
 
     def _build_ib_contract_spec(
@@ -627,9 +623,17 @@ class PremiumFetcher:
                 continue
 
             if asset_config.future_source == "akshare_global":
-                akshare_results = self._build_akshare_index_snapshots(
-                    asset_config, spot_price, spot_source
-                )
+                try:
+                    akshare_results = self._build_akshare_index_snapshots(
+                        asset_config, spot_price, spot_source
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "premium_index_futures_fetch_failed",
+                        asset_group=asset_config.asset_group,
+                        error=str(exc),
+                    )
+                    akshare_results = []
                 if akshare_results:
                     results.extend(akshare_results)
                 elif asset_config.future_symbol:
