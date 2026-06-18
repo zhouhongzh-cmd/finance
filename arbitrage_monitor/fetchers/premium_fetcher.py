@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from calendar import monthrange
 from datetime import datetime
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 import akshare as ak
 import httpx
 import pandas as pd
+import requests
 import yfinance as yf
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -160,32 +162,65 @@ class PremiumFetcher:
             f"premium_{asset_config.asset_group.lower()}_spot_yfinance",
         )
 
-    def _fetch_yfinance_price(self, symbol: str, source_name: str) -> tuple[float | None, str]:
-        try:
-            with source_health_context(source_name):
-                ticker = yf.Ticker(symbol)
-                fast_info = getattr(ticker, "fast_info", None)
-                if fast_info is not None:
-                    price = fast_info.get("lastPrice") or fast_info.get("regularMarketPrice")
-                    if price is not None:
-                        return float(price), "yfinance.fast_info"
+    def _build_yfinance_session(self) -> requests.Session:
+        """为 yfinance 构造带代理 + 浏览器 UA 的 session。
 
-                info = ticker.info
-                price = (
-                    info.get("regularMarketPrice")
-                    or info.get("currentPrice")
-                    or info.get("lastPrice")
+        代理地址通过环境变量 ``YFINANCE_PROXY`` 配置（默认本机 Clash
+        ``http://127.0.0.1:7897``）；置为空字符串则不走代理。容器内需以
+        host 网络运行，``127.0.0.1`` 才能命中宿主的代理端口。
+        """
+        proxy_url = os.environ.get("YFINANCE_PROXY", "http://127.0.0.1:7897").strip()
+        session = requests.Session()
+        if proxy_url:
+            session.proxies.update({"http": proxy_url, "https": proxy_url})
+        # Yahoo 对默认 UA 限流较狠，伪装浏览器可显著降低 429。
+        session.headers.update(
+            {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
                 )
-                if price is not None:
-                    return float(price), "yfinance.info"
+            }
+        )
+        return session
 
-                hist = ticker.history(period="1d")
-                if hist is not None and not hist.empty:
-                    close_price = hist["Close"].iloc[-1]
-                    if pd.notna(close_price):
-                        return float(close_price), "yfinance.history_1d"
-        except Exception as exc:
-            logger.warning("premium_yfinance_fetch_failed", symbol=symbol, error=str(exc))
+    def _fetch_yfinance_price(self, symbol: str, source_name: str) -> tuple[float | None, str]:
+        session = self._build_yfinance_session()
+
+        last_exc: Exception | None = None
+        # 最多 3 次：退避 2s / 4s，兜底 Yahoo 的瞬时限流（YFRateLimitError）。
+        for attempt in range(3):
+            try:
+                with source_health_context(source_name):
+                    ticker = yf.Ticker(symbol, session=session)
+                    fast_info = getattr(ticker, "fast_info", None)
+                    if fast_info is not None:
+                        price = fast_info.get("lastPrice") or fast_info.get("regularMarketPrice")
+                        if price is not None:
+                            return float(price), "yfinance.fast_info"
+
+                    info = ticker.info
+                    price = (
+                        info.get("regularMarketPrice")
+                        or info.get("currentPrice")
+                        or info.get("lastPrice")
+                    )
+                    if price is not None:
+                        return float(price), "yfinance.info"
+
+                    hist = ticker.history(period="1d")
+                    if hist is not None and not hist.empty:
+                        close_price = hist["Close"].iloc[-1]
+                        if pd.notna(close_price):
+                            return float(close_price), "yfinance.history_1d"
+                # 连上了但没取到价格，重试无益，直接返回。
+                return None, ""
+            except Exception as exc:
+                last_exc = exc
+                if attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+        logger.warning("premium_yfinance_fetch_failed", symbol=symbol, error=str(last_exc))
         return None, ""
 
     def _gate_get_json(self, path: str, *, source_name: str) -> Any:
