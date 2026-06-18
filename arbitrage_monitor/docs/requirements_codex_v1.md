@@ -1,8 +1,8 @@
 # 个人金融套利监控系统 — 需求文档（Codex 重构版）
 
-> 版本: V1.4
+> 版本: V1.5
 > 创建日期: 2026-03-15
-> 最后更新: 2026-05-05
+> 最后更新: 2026-06-18
 > 适用范围: `arbitrage_monitor` 当前仓库实现与后续迭代
 > 说明: 本文档为新的工程化需求基线，保持现有文档不变，仅作为更清晰的替代版本
 
@@ -17,6 +17,7 @@
 | V1.2 | 2026-04-23 | 1. 补充当前已落地的数据表与运行状态表<br>2. 明确 `alert_history` 以数据库只保留同一 `asset` 最新一条为当前实现口径<br>3. 补充 `premium_thresholds.json` 与 `XUEQIU_COOKIE` 配置说明 |
 | V1.3 | 2026-04-25 | 1. 更新测试基准为默认 pytest 39 通过、兼容套件 77 通过<br>2. 明确期指活跃合约生成需覆盖交割日后顺延边界<br>3. 补充默认 pytest 不应被旧测试输出文件阻断的验收要求 |
 | V1.4 | 2026-05-05 | 1. 将 A50 期现溢价扩展为外盘指数期现溢价<br>2. 明确外盘指数缺期货源时跳过该资产本轮计算<br>3. 维持 premium 模块共享调度、快照和阈值链路 |
+| V1.5 | 2026-06-18 | 1. §11.5 补充日度清理后的存储维护（`maintain_storage`：`VACUUM` + WAL checkpoint + 清理前后统计）<br>2. §11.5 补充快照表/`alert_history` 自动建索引（`_ensure_indexes`）<br>3. yfinance 经可配置代理 `YFINANCE_PROXY` 访问、受限网络 Docker 部署口径（详见 `premium_arbitrage_design.md` §3.1、`run_guide.md` §3.1） |
 
 ---
 
@@ -665,6 +666,8 @@
 - 后续若新增 `futures_snapshot`、`cb_snapshot`、`source_health_snapshot` 等快照表，也必须纳入同一套保留期治理，而不是无限追加
 - 长期演进仍建议补充数据量阀值告警与更细粒度的清理统计
 - 高频快照表应执行“分钟级去重 + 关键字段无变化跳过 + 保底定时写入”的轻量瘦身策略，避免盯盘模式下全量重复落库
+- 日度保留期清理后调用 `DBManager.maintain_storage()` 收敛存储：执行 `PRAGMA wal_checkpoint(TRUNCATE)` + `VACUUM` 回收空闲页与 WAL，并返回 `page_size` 及清理前后的 `page_count`/`freelist_count`，由维护任务记入 `job_run_status`，作为“更细粒度清理统计”的落地
+- 各快照表与 `alert_history` 在初始化时由 `DBManager._ensure_indexes()` 自动建立按 `(symbol, id)`、`fetched_at`、`timestamp` 等维度的索引，保证保留期清理与最新快照读取在低配环境下不退化为全表扫描
 
 ---
 

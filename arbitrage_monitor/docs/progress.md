@@ -1,6 +1,6 @@
 # Progress Board
 
-> 更新时间: 2026-05-05
+> 更新时间: 2026-06-18
 > 当前基线: `docs/requirements_codex_v1.md`
 
 ---
@@ -23,7 +23,7 @@
 补充说明：
 
 - 期指模块现已包含保证金快照、现货指数备源和 `16` 合约覆盖，且已补交割日后顺延边界测试
-- 当前测试结果：默认 `python3 -m pytest -q` 为 `39` 通过；显式兼容套件 `python3 -m pytest -q tests/*.py` 为 `77` 通过
+- 当前测试结果：默认 `python3 -m pytest -q` 为 `49` 通过；显式兼容套件 `python3 -m pytest -q tests/*.py` 为 `89` 通过
 - 结构治理计划已建立，执行基线见 `docs/refactor_plan_20260423.md`
 - 已接入 `外盘指数 + Top10 合约加密资产池` 期现溢价模块，支持独立调度、SQLite 快照、参数页和看板
 - 当前看板已切换为“分页查看 + 当前页手动刷新”的老 GUI 风格
@@ -46,6 +46,10 @@
 - 期现溢价看板默认改为“快照优先 + 手动强制抓新”，并已修复 `Top10` 加密资产在快照回读时被旧结构压缩成 `BTC` 单资产的问题
 - 外盘指数已按“可用源优先”写入当前可形成现货/期货对的快照；恒生指数期货、纳指/标普远月与 DAX/FTSE 等期货腿仍待探索
 - 调度器现已补齐可转债、舆情快照的持久化与历史清理统计，模块级快照链路保持一致
+- DB 初始化已自动建立各快照表与 `alert_history` 的常用索引（`_ensure_indexes`），低配环境下清理与最新快照读取不再全表扫描
+- 日度保留期清理后新增存储维护 `maintain_storage`（`VACUUM` + WAL checkpoint），并把清理前后的 `page_count`/`freelist_count` 记入 `job_run_status`
+- yfinance 取价统一经可配置代理 `YFINANCE_PROXY`（默认本机 Clash）+ 浏览器 UA + 退避重试，缓解 Yahoo 429；A50 `XIN9.FGI` 已实测可取数
+- 受限网络主机（linux）Docker 部署已打通：基础镜像走国内镜像源、pip 用 `--build-arg`、容器以 `--network host` 命中宿主代理（见 `run_guide.md` §3.1）
 
 ### 当前仍未闭环
 
