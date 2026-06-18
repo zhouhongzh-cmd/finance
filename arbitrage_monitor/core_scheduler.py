@@ -637,6 +637,7 @@ def cleanup_old_runtime_data():
         sentiment_rows = db_manager.purge_sentiment_snapshots_older_than(retention_days)
         metals_rows = db_manager.purge_metal_snapshots_older_than(retention_days)
         premium_rows = db_manager.purge_premium_snapshots_older_than(retention_days)
+        storage_stats = db_manager.maintain_storage()
         logger.info(
             "retention_cleanup_completed",
             retention_days=retention_days,
@@ -647,8 +648,13 @@ def cleanup_old_runtime_data():
             deleted_sentiment_snapshot_rows=sentiment_rows,
             deleted_metal_snapshot_rows=metals_rows,
             deleted_premium_snapshot_rows=premium_rows,
+            storage_page_size=storage_stats["page_size"],
+            storage_page_count_before=storage_stats["page_count_before"],
+            storage_page_count_after=storage_stats["page_count_after"],
+            storage_freelist_count_before=storage_stats["freelist_count_before"],
+            storage_freelist_count_after=storage_stats["freelist_count_after"],
         )
-        return {"status": "SUCCESS"}
+        return {"status": "SUCCESS", "storage": storage_stats}
     except Exception as exc:
         logger.error("retention_cleanup_failed", error=str(exc), exc_info=True)
         return {"status": "FAILED", "error": str(exc)}

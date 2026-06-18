@@ -244,6 +244,7 @@ class DBManager:
             self._ensure_column(conn, "premium_arbitrage_snapshot", "expiry_ts", "TEXT DEFAULT ''")
             self._ensure_column(conn, "premium_arbitrage_snapshot", "bucket_rank", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "premium_arbitrage_snapshot", "source_exchange", "TEXT DEFAULT ''")
+            self._ensure_indexes(conn)
 
     def _ensure_column(self, conn, table: str, column: str, definition: str) -> None:
         columns = {
@@ -253,6 +254,26 @@ class DBManager:
         if column not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
             conn.commit()
+
+    def _ensure_indexes(self, conn) -> None:
+        index_statements = (
+            "CREATE INDEX IF NOT EXISTS idx_alert_history_timestamp ON alert_history(timestamp)",
+            "CREATE INDEX IF NOT EXISTS idx_futures_margin_product_fetched_at ON futures_margin_snapshot(product_code, fetched_at)",
+            "CREATE INDEX IF NOT EXISTS idx_futures_margin_fetched_at ON futures_margin_snapshot(fetched_at)",
+            "CREATE INDEX IF NOT EXISTS idx_futures_live_symbol_id ON futures_live_snapshot(symbol, id)",
+            "CREATE INDEX IF NOT EXISTS idx_futures_live_fetched_at ON futures_live_snapshot(fetched_at)",
+            "CREATE INDEX IF NOT EXISTS idx_metal_symbol_id ON metal_arbitrage_snapshot(symbol, id)",
+            "CREATE INDEX IF NOT EXISTS idx_metal_fetched_at ON metal_arbitrage_snapshot(fetched_at)",
+            "CREATE INDEX IF NOT EXISTS idx_premium_symbol_id ON premium_arbitrage_snapshot(symbol, id)",
+            "CREATE INDEX IF NOT EXISTS idx_premium_fetched_at ON premium_arbitrage_snapshot(fetched_at)",
+            "CREATE INDEX IF NOT EXISTS idx_convertible_symbol_id ON convertible_live_snapshot(symbol, id)",
+            "CREATE INDEX IF NOT EXISTS idx_convertible_fetched_at ON convertible_live_snapshot(fetched_at)",
+            "CREATE INDEX IF NOT EXISTS idx_sentiment_symbol_id ON sentiment_live_snapshot(symbol, id)",
+            "CREATE INDEX IF NOT EXISTS idx_sentiment_fetched_at ON sentiment_live_snapshot(fetched_at)",
+        )
+        for statement in index_statements:
+            conn.execute(statement)
+        conn.commit()
 
     @contextmanager
     def get_connection(self):
@@ -620,10 +641,6 @@ class DBManager:
         """保存信号并返回记录 ID。"""
         with self._write_lock:
             with self.get_connection() as conn:
-                conn.execute(
-                    "DELETE FROM alert_history WHERE asset = ?",
-                    (signal.asset,),
-                )
                 cursor = conn.execute(
                     """
                     INSERT INTO alert_history (timestamp, asset, strategy, level, message, notified)
@@ -640,6 +657,35 @@ class DBManager:
                 )
                 conn.commit()
                 return int(cursor.lastrowid)
+
+    def maintain_storage(self) -> dict[str, int]:
+        """收敛 SQLite 空闲页和 WAL 文件，供低频保留期清理后调用。"""
+        with self._write_lock:
+            conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=5.0)
+            try:
+                conn.isolation_level = None
+                before = self._storage_stats(conn)
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                conn.execute("VACUUM")
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                after = self._storage_stats(conn)
+            finally:
+                conn.close()
+
+        return {
+            "page_size": after["page_size"],
+            "page_count_before": before["page_count"],
+            "page_count_after": after["page_count"],
+            "freelist_count_before": before["freelist_count"],
+            "freelist_count_after": after["freelist_count"],
+        }
+
+    def _storage_stats(self, conn) -> dict[str, int]:
+        return {
+            "page_size": int(conn.execute("PRAGMA page_size").fetchone()[0]),
+            "page_count": int(conn.execute("PRAGMA page_count").fetchone()[0]),
+            "freelist_count": int(conn.execute("PRAGMA freelist_count").fetchone()[0]),
+        }
 
     def mark_alert_notified(self, alert_id: int) -> None:
         """将指定报警记录标记为通知已送达至少一个渠道。"""

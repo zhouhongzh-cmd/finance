@@ -39,14 +39,49 @@ def test_db_manager():
     print("✅ DB Manager: OK")
     return True
 
-def test_alert_history_latest_only():
-    """测试同一 asset 只保留最新一条报警记录。"""
-    logger.info("test_alert_history_latest_only_start")
+def test_db_indexes_initialized():
+    """测试数据库初始化会创建高频查询索引。"""
+    logger.info("test_db_indexes_initialized_start")
+
+    db = DBManager()
+    expected_indexes = {
+        "idx_alert_history_timestamp",
+        "idx_futures_margin_product_fetched_at",
+        "idx_futures_margin_fetched_at",
+        "idx_futures_live_symbol_id",
+        "idx_futures_live_fetched_at",
+        "idx_metal_symbol_id",
+        "idx_metal_fetched_at",
+        "idx_premium_symbol_id",
+        "idx_premium_fetched_at",
+        "idx_convertible_symbol_id",
+        "idx_convertible_fetched_at",
+        "idx_sentiment_symbol_id",
+        "idx_sentiment_fetched_at",
+    }
+
+    with db.get_connection() as conn:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index'"
+        ).fetchall()
+    actual_indexes = {row[0] for row in rows}
+    missing = expected_indexes - actual_indexes
+    if missing:
+        print(f"❌ DB Indexes: missing indexes {sorted(missing)}")
+        return False
+
+    logger.info("db_indexes_initialized_ok", index_count=len(expected_indexes))
+    print("✅ DB Indexes Initialized: OK")
+    return True
+
+def test_alert_history_append_only():
+    """测试同一 asset 的报警历史按流水追加保存。"""
+    logger.info("test_alert_history_append_only_start")
 
     from models.signals import Signal
 
     db = DBManager()
-    asset = "LATEST_ONLY_TEST"
+    asset = "APPEND_ONLY_TEST"
     with db.get_connection() as conn:
         conn.execute("DELETE FROM alert_history WHERE asset = ?", (asset,))
         conn.commit()
@@ -76,18 +111,21 @@ def test_alert_history_latest_only():
         conn.execute("DELETE FROM alert_history WHERE asset = ?", (asset,))
         conn.commit()
 
-    if len(rows) != 1:
-        print(f"❌ Alert Latest Only: expected 1 row, got {len(rows)}")
+    if len(rows) != 2:
+        print(f"❌ Alert Append Only: expected 2 rows, got {len(rows)}")
         return False
     if rows[0][0] != second_id or rows[0][1] != "Strategy_B" or rows[0][2] != "second":
-        print(f"❌ Alert Latest Only: latest row mismatch {rows}")
+        print(f"❌ Alert Append Only: latest row mismatch {rows}")
+        return False
+    if rows[1][0] != first_id or rows[1][1] != "Strategy_A" or rows[1][2] != "first":
+        print(f"❌ Alert Append Only: historical row mismatch {rows}")
         return False
     if first_id == second_id:
-        print("❌ Alert Latest Only: expected new insert id for replacement row")
+        print("❌ Alert Append Only: expected distinct insert ids")
         return False
 
-    logger.info("alert_history_latest_only_ok", alert_id=second_id)
-    print("✅ Alert History Latest Only: OK")
+    logger.info("alert_history_append_only_ok", alert_ids=[first_id, second_id])
+    print("✅ Alert History Append Only: OK")
     return True
 
 def test_snapshot_deduplication():
@@ -510,4 +548,3 @@ def test_latest_snapshot_readers():
     logger.info("latest_snapshot_readers_ok")
     print("✅ Latest Snapshot Readers: OK")
     return True
-

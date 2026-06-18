@@ -446,3 +446,37 @@ def test_retention_cleanup():
     print("✅ Retention Cleanup: OK")
     return True
 
+def test_storage_maintenance_reclaims_freelist():
+    """测试低频数据库维护可回收 SQLite 空闲页。"""
+    logger.info("test_storage_maintenance_reclaims_freelist_start")
+
+    db = DBManager()
+    with db.get_connection() as conn:
+        conn.execute("CREATE TABLE storage_maintenance_test (payload TEXT NOT NULL)")
+        conn.executemany(
+            "INSERT INTO storage_maintenance_test (payload) VALUES (?)",
+            [("x" * 2048,) for _ in range(200)],
+        )
+        conn.commit()
+        conn.execute("DROP TABLE storage_maintenance_test")
+        conn.commit()
+        freelist_before = int(conn.execute("PRAGMA freelist_count").fetchone()[0])
+
+    stats = db.maintain_storage()
+
+    with db.get_connection() as conn:
+        freelist_after = int(conn.execute("PRAGMA freelist_count").fetchone()[0])
+
+    if freelist_before <= 0:
+        print(f"❌ Storage Maintenance: expected freelist before maintenance, got {freelist_before}")
+        return False
+    if stats["freelist_count_before"] <= 0 or stats["freelist_count_after"] != 0:
+        print(f"❌ Storage Maintenance: unexpected maintenance stats {stats}")
+        return False
+    if freelist_after != 0:
+        print(f"❌ Storage Maintenance: expected freelist after 0, got {freelist_after}")
+        return False
+
+    logger.info("storage_maintenance_reclaims_freelist_ok", **stats)
+    print("✅ Storage Maintenance: OK")
+    return True

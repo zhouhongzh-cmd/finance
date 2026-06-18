@@ -9,8 +9,9 @@ if str(TEST_ROOT) not in sys.path:
     sys.path.insert(0, str(TEST_ROOT))
 
 from tests.test_snapshot_storage import (
-    test_alert_history_latest_only,
+    test_alert_history_append_only,
     test_db_manager,
+    test_db_indexes_initialized,
     test_latest_snapshot_readers,
     test_snapshot_deduplication,
 )
@@ -50,6 +51,7 @@ from tests.test_retention_and_ops import (
     test_job_run_status_tracking,
     test_retention_cleanup,
     test_source_health_tracking,
+    test_storage_maintenance_reclaims_freelist,
 )
 from tests.test_fetchers_and_strategies import (
     test_fetchers_mock,
@@ -76,12 +78,14 @@ def main():
         ("Strategy Enable Switches", test_strategy_enable_switches),
         ("Mode Enable Switches", test_mode_enable_switches),
         ("Threshold Enable Switches", test_threshold_enable_switches),
-        ("Alert History Latest Only", test_alert_history_latest_only),
+        ("DB Indexes Initialized", test_db_indexes_initialized),
+        ("Alert History Append Only", test_alert_history_append_only),
         ("Snapshot Deduplication", test_snapshot_deduplication),
         ("Latest Snapshot Readers", test_latest_snapshot_readers),
         ("Scheduler Runtime Sync", test_scheduler_runtime_settings_sync),
         ("Cooldown Restore", test_cooldown_restore_roundtrip),
         ("Retention Cleanup", test_retention_cleanup),
+        ("Storage Maintenance", test_storage_maintenance_reclaims_freelist),
         ("Fetchers (Mock)", test_fetchers_mock),
         ("Strategies", test_strategies),
         ("Metals Conversion", test_metals_conversion_and_thresholds),
