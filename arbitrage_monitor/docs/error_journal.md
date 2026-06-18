@@ -20,3 +20,6 @@
 | 2026-04-25 | `docs/reviews/code_review_report_20260425.md` | 测试曾直接写默认运行数据库 | `DBManager()` 默认生产路径且有单例状态 | RESOLVED | 会写库测试必须隔离临时 DB |
 | 2026-04-25 | `docs/reviews/code_review_report_20260425.md` | Docker healthcheck 只能证明 SQLite 可打开 | 健康检查未覆盖调度器心跳或 Dashboard HTTP | DEFERRED | 进入部署增强时处理 |
 | 2026-04-26 | 当前检查 | `alert_history` 当前按 `asset` 去重 | 当前实现语义如此，是否改为 `strategy+asset` 需要先定设计 | WATCH | 不直接脚本阻断，先人工确认语义 |
+| 2026-06-18 | linux 主机部署 | `docker build` 卡死，新代码无法部署 | 主机外网受限，Docker Hub / `deb.debian.org` / `pypi.org` 均不可达 | RESOLVED | 基础镜像从 `docker.m.daocloud.io` 拉取后 `docker tag` 成 `python:3.11-slim`；删除多余的 apt 装 curl；pip 用 `--build-arg PIP_INDEX_URL` 指国内源 |
+| 2026-06-18 | linux 主机部署 | 容器内 yfinance 代理失效，A50/外盘指数取价失败 | bridge 网络下 `127.0.0.1` 指向容器自身，连不到仅监听 loopback 的宿主 Clash | RESOLVED | 容器改用 `--network host`；代理地址抽成环境变量 `YFINANCE_PROXY`（见 `premium_arbitrage_design.md` §3.1） |
+| 2026-06-18 | linux 主机部署 | yfinance 取价频繁 `YFRateLimitError`（HTTP 429） | Yahoo 对默认 UA / crumb 端点限流 | RESOLVED | `_fetch_yfinance_price` 会话带浏览器 `User-Agent` 并退避重试（2s/4s） |

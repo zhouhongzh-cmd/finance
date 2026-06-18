@@ -44,6 +44,7 @@ pip install -r requirements.txt
 - `IB_REMOTE_HOST` / `IB_REMOTE_PORT` / `IB_REMOTE_CLIENT_ID`
 - `IB_LOCAL_HOST` / `IB_LOCAL_PORT` / `IB_LOCAL_CLIENT_ID`
 - `IB_GATEWAY_TIMEOUT_SECONDS`
+- `YFINANCE_PROXY`: yfinance 访问 Yahoo 的代理地址，默认 `http://127.0.0.1:7897`（本机 Clash）；置空则直连。容器内需配合 `--network host` 才能命中宿主代理端口。
 
 启动调度器:
 
@@ -88,6 +89,36 @@ docker compose logs -f streamlit_dashboard
 ```bash
 docker compose down
 ```
+
+### 3.1 受限网络主机部署（linux）
+
+部署主机 `linux` 外网出口受限：Docker Hub、`deb.debian.org`、`pypi.org` 均不可达，只有国内镜像源可用；且 yfinance 需走宿主 Clash 代理。因此不直接用 compose，而是按以下方式构建与运行（详细绕法见 `error_journal.md` 对应条目）：
+
+构建（基础镜像需先从可用镜像源拉取并打标签为 `python:3.11-slim`，pip 走国内源）：
+
+```bash
+docker pull docker.m.daocloud.io/library/python:3.11-slim
+docker tag docker.m.daocloud.io/library/python:3.11-slim python:3.11-slim
+docker build --build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+  -t arbitrage-monitor:latest .
+```
+
+运行（两个容器均用 `--network host`，使 yfinance 的 `127.0.0.1:7897` 能命中宿主 Clash）：
+
+```bash
+BASE=/home/hikiwa/coding/finance/arbitrage_monitor
+docker run -d --name arbitrage_monitor_docker --restart unless-stopped --network host \
+  -e TZ=Asia/Shanghai \
+  -v $BASE/config:/app/config -v $BASE/data:/app/data -v $BASE/.env:/app/.env:ro \
+  arbitrage-monitor:latest python core_scheduler.py
+docker run -d --name streamlit_dashboard_docker --restart unless-stopped --network host \
+  -e TZ=Asia/Shanghai \
+  -v $BASE/config:/app/config -v $BASE/data:/app/data -v $BASE/.env:/app/.env:ro \
+  arbitrage-monitor:latest streamlit run app_dashboard.py \
+  --server.address 0.0.0.0 --server.port 8501 --server.headless true
+```
+
+> 该主机上的代码是非 git 拷贝，改动需从 mac 仓库 `scp` 同步后再重建镜像。
 
 ## 4. 验证步骤
 

@@ -228,10 +228,10 @@
 - `rate_limit`: 中等
 - `latency`: 中等
 - `quality`: 中高
-- `fallback`: 东财指数源失败后，按资产映射回退到 `yf.Ticker(...)`；仍失败则跳过该指数全组
+- `fallback`: 东财指数源失败后，按资产映射回退到 `yf.Ticker(...)`（经代理 + UA + 重试，见 1.19）；仍失败则跳过该指数全组
 - `调度频率`: 巡航 5 分钟 / 盯盘 30 秒
-- `最后验证时间`: 2026-05-05
-- `notes`: 第一版用 `index_global_spot_em()` 覆盖 `NDX/SPX/DJIA/HSI/N225`，用 `stock_hk_index_spot_em()` 覆盖恒生专用现货；A50 现货继续保留 yfinance `XIN9.FGI`
+- `最后验证时间`: 2026-06-18
+- `notes`: 第一版用 `index_global_spot_em()` 覆盖 `NDX/SPX/DJIA/HSI/N225`，用 `stock_hk_index_spot_em()` 覆盖恒生专用现货；A50 现货继续保留 yfinance `XIN9.FGI`（2026-06-18 经 `YFINANCE_PROXY` 实测可取数）
 
 ### 1.18 外盘指数期货主数据源
 
@@ -252,13 +252,14 @@
 - `status`: `ACTIVE`
 - `module`: `fetchers/premium_fetcher.py`
 - `name`: `yfinance.index_futures`
-- `call`: `yf.Ticker("NQ=F"/"ES=F"/"YM=F"/"NKD=F")`
-- `rate_limit`: 中等
+- `call`: `yf.Ticker("NQ=F"/"ES=F"/"YM=F"/"NKD=F")`，统一经 `_fetch_yfinance_price` / `_build_yfinance_session`
+- `rate_limit`: 中等；Yahoo 对默认 UA / crumb 端点会触发 `YFRateLimitError`（HTTP 429），会话带浏览器 `User-Agent` + 退避重试（2s/4s，最多 3 次）后可稳定取数
 - `latency`: 中等
 - `quality`: 中
 - `fallback`: 单个期货价格缺失时跳过该指数本轮折溢价计算
+- `proxy`: 经 `requests.Session` 走代理访问 Yahoo，地址由环境变量 `YFINANCE_PROXY` 配置（默认 `http://127.0.0.1:7897`）；容器内需 `--network host`。详见 `premium_arbitrage_design.md` §3.1
 - `调度频率`: 巡航 5 分钟 / 盯盘 30 秒
-- `最后验证时间`: 2026-05-05
+- `最后验证时间`: 2026-06-18
 - `notes`: 当前作为纳斯达克 100、标普 500、道指的备源，以及日经 225 的默认期货腿；恒指、DAX、FTSE 常见 Yahoo 期货符号当前不可用，不写入已交付能力
 
 ### 1.20 外盘指数期货待探索数据源

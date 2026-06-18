@@ -1,7 +1,7 @@
 # 外盘指数 / Crypto 期现溢价专题设计
 
 > 状态: ACTIVE
-> 最后更新: 2026-05-05
+> 最后更新: 2026-06-18
 > 关联基线: `docs/requirements_codex_v1.md`
 
 ---
@@ -80,6 +80,16 @@ crypto / 加密资产以 `asset_group × contract_bucket` 展示。当前合约�
 - DAX、FTSE 等其他外盘指数期货腿。
 
 模块级 `fetch_live()` 使用 `tenacity`，当前为最多 3 次、指数退避 `2s -> 4s -> 8s`。
+
+### 3.1 yfinance 访问（代理与限流）
+
+所有经 `yf.Ticker(...)` 的取价（外盘指数现货回退、A50 现货 `XIN9.FGI`、美股 / 日经期货备源 `NQ=F`/`ES=F`/`YM=F`/`NKD=F` 等）统一走 `_fetch_yfinance_price`，由 `_build_yfinance_session()` 构造会话：
+
+- **代理**：用 `requests.Session` 走代理访问 Yahoo，地址由环境变量 `YFINANCE_PROXY` 配置（默认 `http://127.0.0.1:7897`，即本机 Clash；置空字符串则直连）。在容器内运行时需以 `--network host` 启动，`127.0.0.1` 才能命中宿主的代理端口（bridge 网络下 `127.0.0.1` 指向容器自身，连不到宿主 Clash）。
+- **反限流**：会话带浏览器 `User-Agent`，显著降低 Yahoo `YFRateLimitError`（HTTP 429）。
+- **重试**：取价失败时退避重试最多 3 次（`2s -> 4s`）；若已连上但未取到价格则不重试，直接返回空。
+
+> 该重试与上文模块级 `fetch_live()` 的 `tenacity` 重试相互独立，分别作用于单标的取价和整轮抓取。
 
 ---
 
